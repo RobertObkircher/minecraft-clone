@@ -6,9 +6,10 @@ use bytemuck::{Pod, Zeroable};
 use log::info;
 use pollster;
 use wgpu::util::DeviceExt;
-use winit::event::{Event, WindowEvent};
+use winit::event::{ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
-use winit::window::{Window, WindowBuilder};
+use winit::keyboard::{Key, NamedKey};
+use winit::window::{CursorGrabMode, Window, WindowBuilder};
 
 fn main() {
     env_logger::init();
@@ -231,6 +232,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         multiview: None,
     });
 
+    let mut is_locked = false;
+
     event_loop.run(move |event, target| {
         let id = window.id();
         match event {
@@ -287,6 +290,28 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                         queue.submit(Some(encoder.finish()));
                         frame.present();
+                    }
+                    WindowEvent::Focused(focused) => {
+                        // TODO winit bug? changing cursor grab mode here didn't work
+                    }
+                    WindowEvent::MouseInput { device_id, state, button } => {
+                        // TODO account for device_id
+                        if !is_locked && state == ElementState::Pressed && (button == MouseButton::Left || button == MouseButton::Right) {
+                            info!("Locking cursor");
+                            match window.set_cursor_grab(CursorGrabMode::Locked) {
+                                Ok(()) => {
+                                    is_locked = true;
+                                }
+                                Err(e) => todo!("Lock cursor manually with set_position for x11 and windows?")
+                            }
+                        }
+                    }
+                    WindowEvent::KeyboardInput { device_id, event, is_synthetic } => {
+                        if is_locked && event.logical_key == Key::Named(NamedKey::Escape) {
+                            info!("Unlocking cursor");
+                            window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                            is_locked = false;
+                        }
                     }
                     _ => {}
                 }
