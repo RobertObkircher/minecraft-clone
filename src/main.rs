@@ -6,7 +6,7 @@ use bytemuck::{Pod, Zeroable};
 use log::info;
 use pollster;
 use wgpu::util::DeviceExt;
-use winit::event::{ElementState, Event, MouseButton, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, Window, WindowBuilder};
@@ -233,6 +233,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     });
 
     let mut is_locked = false;
+    let mut direction = glam::Quat::IDENTITY;
 
     event_loop.run(move |event, target| {
         let id = window.id();
@@ -261,6 +262,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                                 label: None,
                             });
+
+                        let mx_total = generate_matrix(config.width as f32 / config.height as f32)
+                            .mul_mat4(&glam::Mat4::from_quat(direction));
+                        let mx_ref: &[f32; 16] = mx_total.as_ref();
+                        queue.write_buffer(&uniform_buf, 0, &bytemuck::cast_slice(mx_ref));
+
                         {
                             let mut rpass =
                                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -290,11 +297,13 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                         queue.submit(Some(encoder.finish()));
                         frame.present();
+
+                        window.request_redraw();
                     }
-                    WindowEvent::Focused(focused) => {
+                    WindowEvent::Focused(_) => {
                         // TODO winit bug? changing cursor grab mode here didn't work
                     }
-                    WindowEvent::MouseInput { device_id, state, button } => {
+                    WindowEvent::MouseInput { state, button, .. } => {
                         // TODO account for device_id
                         if !is_locked && state == ElementState::Pressed && (button == MouseButton::Left || button == MouseButton::Right) {
                             info!("Locking cursor");
@@ -302,15 +311,27 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 Ok(()) => {
                                     is_locked = true;
                                 }
-                                Err(e) => todo!("Lock cursor manually with set_position for x11 and windows?")
+                                Err(e) => todo!("Lock cursor manually with set_position for x11 and windows? {e}")
                             }
                         }
                     }
-                    WindowEvent::KeyboardInput { device_id, event, is_synthetic } => {
+                    WindowEvent::KeyboardInput { event, .. } => {
                         if is_locked && event.logical_key == Key::Named(NamedKey::Escape) {
                             info!("Unlocking cursor");
                             window.set_cursor_grab(CursorGrabMode::None).unwrap();
                             is_locked = false;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Event::DeviceEvent { event, .. } => {
+                match event {
+                    DeviceEvent::MouseMotion { delta } => {
+                        if is_locked {
+                            direction = direction
+                                .mul_quat(glam::Quat::from_rotation_x(delta.0 as f32 / 10.0))
+                                .mul_quat(glam::Quat::from_rotation_y(delta.1 as f32 / 10.0));
                         }
                     }
                     _ => {}
