@@ -1,8 +1,10 @@
 use std::borrow::Cow;
-use std::f32::consts;
+use std::f32::consts::{PI, TAU};
 use std::mem;
+use std::time::Duration;
 
 use bytemuck::{Pod, Zeroable};
+use glam::{Mat4, Vec3};
 use log::info;
 use pollster;
 use wgpu::util::DeviceExt;
@@ -10,6 +12,10 @@ use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, Window, WindowBuilder};
+
+use crate::camera::Camera;
+
+mod camera;
 
 fn main() {
     env_logger::init();
@@ -83,16 +89,37 @@ fn create_vertices() -> (Vec<Vertex>, Vec<u16>) {
         20, 21, 22, 22, 23, 20, // back
     ];
 
-    (vertex_data.to_vec(), index_data.to_vec())
+    let mut vd = Vec::with_capacity(vertex_data.len() * 4);
+    vd.extend_from_slice(&vertex_data);
+    vd.extend(vertex_data.iter().cloned().map(|mut it| {
+        it.pos[0] += 2.2;
+        it
+    }));
+    vd.extend(vertex_data.iter().cloned().map(|mut it| {
+        it.pos[1] += 2.2;
+        it
+    }));
+    vd.extend(vertex_data.iter().cloned().map(|mut it| {
+        it.pos[2] += 2.2;
+        it
+    }));
+
+    let mut id = Vec::with_capacity(index_data.len() * 4);
+    id.extend_from_slice(&index_data);
+    id.extend(index_data.iter().map(|it| it + vertex_data.len() as u16));
+    id.extend(index_data.iter().map(|it| it + (vertex_data.len() * 2) as u16));
+    id.extend(index_data.iter().map(|it| it + (vertex_data.len() * 3) as u16));
+
+    (vd, id)
 }
 
-fn generate_matrix(aspect_ratio: f32) -> glam::Mat4 {
-    let projection = glam::Mat4::perspective_rh(consts::FRAC_PI_4, aspect_ratio, 1.0, 10.0);
-    let view = glam::Mat4::look_at_rh(
-        glam::Vec3::new(1.5f32, -5.0, 3.0),
-        glam::Vec3::ZERO,
-        glam::Vec3::Z,
-    );
+fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
+    let fov_y_radians = PI / 4.0;
+    let projection = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 100.0);
+
+    let vs = camera.computed_vectors();
+    let view = Mat4::look_to_rh(camera.position, vs.direction, vs.up);
+
     projection * view
 }
 
@@ -168,7 +195,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         push_constant_ranges: &[],
     });
 
-    let mx_total = generate_matrix(config.width as f32 / config.height as f32);
+    let mut camera = Camera::new(Vec3::new(6.0, 6.0, 6.0));
+    camera.turn_right(-TAU / 3.0);
+    camera.turn_up(-PI / 2.0/ 3.0);
+
+    let mx_total = generate_matrix(config.width as f32 / config.height as f32, &camera);
     let mx_ref: &[f32; 16] = mx_total.as_ref();
     let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("Uniform Buffer"),
@@ -232,9 +263,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         multiview: None,
     });
 
-    let mut is_locked = false;
-    let mut direction = glam::Quat::IDENTITY;
+    let delta_time = Duration::from_millis(16).as_secs_f32();
 
+    let mut is_locked = false;
     event_loop.run(move |event, target| {
         let id = window.id();
         match event {
@@ -263,8 +294,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 label: None,
                             });
 
-                        let mx_total = generate_matrix(config.width as f32 / config.height as f32)
-                            .mul_mat4(&glam::Mat4::from_quat(direction));
+                        let mx_total = generate_matrix(config.width as f32 / config.height as f32, &camera);
                         let mx_ref: &[f32; 16] = mx_total.as_ref();
                         queue.write_buffer(&uniform_buf, 0, &bytemuck::cast_slice(mx_ref));
 
@@ -321,6 +351,18 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             window.set_cursor_grab(CursorGrabMode::None).unwrap();
                             is_locked = false;
                         }
+                        let speed = delta_time * 10.0;
+                        if let Key::Character(str) = event.logical_key {
+                            let vectors = camera.computed_vectors();
+                            match str.as_str() {
+                                "w" => camera.position += vectors.direction * speed,
+                                "a" => camera.position -= vectors.right * speed,
+                                "s" => camera.position -= vectors.direction * speed,
+                                "d" => camera.position += vectors.right * speed,
+                                _ => {}
+                            }
+                            dbg!(&camera);
+                        }
                     }
                     _ => {}
                 }
@@ -328,10 +370,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             Event::DeviceEvent { event, .. } => {
                 match event {
                     DeviceEvent::MouseMotion { delta } => {
-                        if is_locked {
-                            direction = direction
-                                .mul_quat(glam::Quat::from_rotation_x(delta.0 as f32 / 10.0))
-                                .mul_quat(glam::Quat::from_rotation_y(delta.1 as f32 / 10.0));
+                        if is_locked && window.has_focus() {
+                            let speed = delta_time * 0.1;
+                            camera.turn_right(delta.0 as f32 * speed);
+                            camera.turn_up(-delta.1 as f32 * speed);
+                            dbg!(&camera);
                         }
                     }
                     _ => {}
