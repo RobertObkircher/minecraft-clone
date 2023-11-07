@@ -7,6 +7,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use log::info;
 use pollster;
+use wgpu::{Color, CompareFunction, DepthStencilState, Device, Face, FragmentState, LoadOp, MultisampleState, Operations, PrimitiveState, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipelineDescriptor, StoreOp, SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor, VertexState};
 use wgpu::util::DeviceExt;
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
@@ -123,6 +124,29 @@ fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
     projection * view
 }
 
+const DEPTH_TEXTURE_FORMAT: TextureFormat = TextureFormat::Depth32Float;
+
+pub fn create_depth_texture(device: &Device, config: &SurfaceConfiguration) -> (Texture, TextureView) {
+    let texture = device.create_texture(&TextureDescriptor {
+        label: Some("depth"),
+        size: wgpu::Extent3d {
+            width: config.width,
+            height: config.height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: TextureDimension::D2,
+        format: DEPTH_TEXTURE_FORMAT,
+        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    });
+    let depth_view = texture.create_view(&TextureViewDescriptor::default());
+
+    (texture, depth_view)
+}
+
+
 async fn run(event_loop: EventLoop<()>, window: Window) {
     let instance = wgpu::Instance::default();
     let surface = unsafe { instance.create_surface(&window) }.unwrap();
@@ -197,7 +221,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let mut camera = Camera::new(Vec3::new(6.0, 6.0, 6.0));
     camera.turn_right(-TAU / 3.0);
-    camera.turn_up(-PI / 2.0/ 3.0);
+    camera.turn_up(-PI / 2.0 / 3.0);
 
     let mx_total = generate_matrix(config.width as f32 / config.height as f32, &camera);
     let mx_ref: &[f32; 16] = mx_total.as_ref();
@@ -241,25 +265,33 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         ],
     }];
 
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+    let mut depth = create_depth_texture(&device, &config);
+
+    let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
         label: None,
         layout: Some(&pipeline_layout),
-        vertex: wgpu::VertexState {
+        vertex: VertexState {
             module: &shader,
             entry_point: "vs_main",
             buffers: &vertex_buffers,
         },
-        fragment: Some(wgpu::FragmentState {
+        fragment: Some(FragmentState {
             module: &shader,
             entry_point: "fs_main",
             targets: &[Some(swapchain_format.into())],
         }),
-        primitive: wgpu::PrimitiveState {
-            cull_mode: Some(wgpu::Face::Back),
+        primitive: PrimitiveState {
+            cull_mode: Some(Face::Back),
             ..Default::default()
         },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
+        depth_stencil: Some(DepthStencilState {
+            format: DEPTH_TEXTURE_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: CompareFunction::Less,
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: MultisampleState::default(),
         multiview: None,
     });
 
@@ -275,6 +307,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         config.width = new_size.width;
                         config.height = new_size.height;
                         surface.configure(&device, &config);
+                        depth = create_depth_texture(&device, &config);
 
                         // necessary on macos, according to hello triangle example
                         window.request_redraw();
@@ -300,17 +333,29 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                         {
                             let mut rpass =
-                                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                encoder.begin_render_pass(&RenderPassDescriptor {
                                     label: None,
-                                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    color_attachments: &[Some(RenderPassColorAttachment {
                                         view: &view,
                                         resolve_target: None,
-                                        ops: wgpu::Operations {
-                                            load: wgpu::LoadOp::Clear(wgpu::Color::GREEN),
-                                            store: wgpu::StoreOp::Store,
+                                        ops: Operations {
+                                            load: LoadOp::Clear(Color {
+                                                r: 238.0 / 255.0,
+                                                g: 238.0 / 255.0,
+                                                b: 238.0 / 255.0,
+                                                a: 1.0,
+                                            }),
+                                            store: StoreOp::Store,
                                         },
                                     })],
-                                    depth_stencil_attachment: None,
+                                    depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                                        view: &depth.1,
+                                        depth_ops: Some(Operations {
+                                            load: LoadOp::Clear(1.0),
+                                            store: StoreOp::Store,
+                                        }),
+                                        stencil_ops: None,
+                                    }),
                                     timestamp_writes: None,
                                     occlusion_query_set: None,
                                 });
