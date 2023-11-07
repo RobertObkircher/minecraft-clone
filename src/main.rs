@@ -7,8 +7,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use log::info;
 use pollster;
-use wgpu::{Color, CompareFunction, DepthStencilState, Device, Face, FragmentState, LoadOp, MultisampleState, Operations, PrimitiveState, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipelineDescriptor, StoreOp, SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor, VertexState};
-use wgpu::util::DeviceExt;
+use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BufferAddress, BufferBindingType, BufferSize, BufferUsages, Color, CommandEncoderDescriptor, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, Face, Features, FragmentState, IndexFormat, Instance, Limits, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode};
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{Key, NamedKey};
@@ -129,7 +129,7 @@ const DEPTH_TEXTURE_FORMAT: TextureFormat = TextureFormat::Depth32Float;
 pub fn create_depth_texture(device: &Device, config: &SurfaceConfiguration) -> (Texture, TextureView) {
     let texture = device.create_texture(&TextureDescriptor {
         label: Some("depth"),
-        size: wgpu::Extent3d {
+        size: Extent3d {
             width: config.width,
             height: config.height,
             depth_or_array_layers: 1,
@@ -148,35 +148,32 @@ pub fn create_depth_texture(device: &Device, config: &SurfaceConfiguration) -> (
 
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
-    let instance = wgpu::Instance::default();
+    let instance = Instance::default();
     let surface = unsafe { instance.create_surface(&window) }.unwrap();
 
-    let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::default(),
+    let adapter = instance.request_adapter(&RequestAdapterOptions {
+        power_preference: PowerPreference::default(),
         force_fallback_adapter: false,
         compatible_surface: Some(&surface),
     }).await.expect("Failed to find an appropriate adapter");
 
-    let (device, queue) = adapter.request_device(
-        &wgpu::DeviceDescriptor {
-            label: None,
-            features: wgpu::Features::empty(),
-            // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-            limits: wgpu::Limits::downlevel_webgl2_defaults()
-                .using_resolution(adapter.limits()),
-        },
-        None,
-    ).await.expect("Failed to create device");
+    let (device, queue) = adapter.request_device(&DeviceDescriptor {
+        label: None,
+        features: Features::empty(),
+        // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
+        limits: Limits::downlevel_webgl2_defaults()
+            .using_resolution(adapter.limits()),
+    }, None).await.expect("Failed to create device");
 
     let swapchain_capabilities = surface.get_capabilities(&adapter);
     let swapchain_format = swapchain_capabilities.formats[0];
     let size = window.inner_size();
-    let mut config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+    let mut config = SurfaceConfiguration {
+        usage: TextureUsages::RENDER_ATTACHMENT,
         format: swapchain_format,
         width: size.width,
         height: size.height,
-        present_mode: wgpu::PresentMode::Fifo,
+        present_mode: PresentMode::Fifo,
         alpha_mode: swapchain_capabilities.alpha_modes[0],
         view_formats: vec![],
     };
@@ -186,34 +183,34 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let vertex_size = mem::size_of::<Vertex>();
     let (vertex_data, index_data) = create_vertices();
 
-    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let vertex_buf = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Vertex Buffer"),
         contents: bytemuck::cast_slice(&vertex_data),
-        usage: wgpu::BufferUsages::VERTEX,
+        usage: BufferUsages::VERTEX,
     });
 
-    let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let index_buf = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Index Buffer"),
         contents: bytemuck::cast_slice(&index_data),
-        usage: wgpu::BufferUsages::INDEX,
+        usage: BufferUsages::INDEX,
     });
 
-    let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+    let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: None,
         entries: &[
-            wgpu::BindGroupLayoutEntry {
+            BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(64),
+                    min_binding_size: BufferSize::new(64),
                 },
                 count: None,
             }
         ],
     });
-    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+    let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
         label: None,
         bind_group_layouts: &[&bind_group_layout],
         push_constant_ranges: &[],
@@ -225,16 +222,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let mx_total = generate_matrix(config.width as f32 / config.height as f32, &camera);
     let mx_ref: &[f32; 16] = mx_total.as_ref();
-    let uniform_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    let uniform_buf = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Uniform Buffer"),
         contents: bytemuck::cast_slice(mx_ref),
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
 
-    let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+    let bind_group = device.create_bind_group(&BindGroupDescriptor {
         layout: &bind_group_layout,
         entries: &[
-            wgpu::BindGroupEntry {
+            BindGroupEntry {
                 binding: 0,
                 resource: uniform_buf.as_entire_binding(),
             }
@@ -243,22 +240,22 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     });
 
 
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+    let shader = device.create_shader_module(ShaderModuleDescriptor {
         label: None,
-        source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
+        source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
     });
 
-    let vertex_buffers = [wgpu::VertexBufferLayout {
-        array_stride: vertex_size as wgpu::BufferAddress,
-        step_mode: wgpu::VertexStepMode::Vertex,
+    let vertex_buffers = [VertexBufferLayout {
+        array_stride: vertex_size as BufferAddress,
+        step_mode: VertexStepMode::Vertex,
         attributes: &[
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x4,
+            VertexAttribute {
+                format: VertexFormat::Float32x4,
                 offset: 0,
                 shader_location: 0,
             },
-            wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32x2,
+            VertexAttribute {
+                format: VertexFormat::Float32x2,
                 offset: 4 * 4,
                 shader_location: 1,
             },
@@ -321,9 +318,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             .expect("Failed to acquire next swap chain texture");
                         let view = frame
                             .texture
-                            .create_view(&wgpu::TextureViewDescriptor::default());
+                            .create_view(&TextureViewDescriptor::default());
                         let mut encoder =
-                            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            device.create_command_encoder(&CommandEncoderDescriptor {
                                 label: None,
                             });
 
@@ -363,7 +360,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             rpass.push_debug_group("Prepare data for draw.");
                             rpass.set_pipeline(&render_pipeline);
                             rpass.set_bind_group(0, &bind_group, &[]);
-                            rpass.set_index_buffer(index_buf.slice(..), wgpu::IndexFormat::Uint16);
+                            rpass.set_index_buffer(index_buf.slice(..), IndexFormat::Uint16);
                             rpass.set_vertex_buffer(0, vertex_buf.slice(..));
                             rpass.pop_debug_group();
                             rpass.insert_debug_marker("Draw!");
