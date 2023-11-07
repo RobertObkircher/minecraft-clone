@@ -4,7 +4,7 @@ use std::mem;
 use std::time::Duration;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, UVec3, Vec3};
 use log::info;
 use pollster;
 use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BufferAddress, BufferBindingType, BufferSize, BufferUsages, Color, CommandEncoderDescriptor, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, Face, Features, FragmentState, IndexFormat, Instance, Limits, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode};
@@ -15,8 +15,14 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, Window, WindowBuilder};
 
 use crate::camera::Camera;
+use crate::chunk::{Block, Chunk};
+use crate::mesh::ChunkMesh;
+use crate::world::{ChunkPosition, World};
 
 mod camera;
+mod world;
+mod chunk;
+mod mesh;
 
 fn main() {
     env_logger::init();
@@ -38,80 +44,6 @@ fn main() {
 struct Vertex {
     pos: [f32; 4],
     tex_coord: [f32; 2],
-}
-
-fn vertex(pos: [i8; 3], tc: [i8; 2]) -> Vertex {
-    Vertex {
-        pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32, 1.0],
-        tex_coord: [tc[0] as f32, tc[1] as f32],
-    }
-}
-
-fn create_vertices() -> (Vec<Vertex>, Vec<u16>) {
-    let vertex_data = [
-        // top (0, 0, 1)
-        vertex([-1, -1, 1], [0, 0]),
-        vertex([1, -1, 1], [1, 0]),
-        vertex([1, 1, 1], [1, 1]),
-        vertex([-1, 1, 1], [0, 1]),
-        // bottom (0, 0, -1)
-        vertex([-1, 1, -1], [1, 0]),
-        vertex([1, 1, -1], [0, 0]),
-        vertex([1, -1, -1], [0, 1]),
-        vertex([-1, -1, -1], [1, 1]),
-        // right (1, 0, 0)
-        vertex([1, -1, -1], [0, 0]),
-        vertex([1, 1, -1], [1, 0]),
-        vertex([1, 1, 1], [1, 1]),
-        vertex([1, -1, 1], [0, 1]),
-        // left (-1, 0, 0)
-        vertex([-1, -1, 1], [1, 0]),
-        vertex([-1, 1, 1], [0, 0]),
-        vertex([-1, 1, -1], [0, 1]),
-        vertex([-1, -1, -1], [1, 1]),
-        // front (0, 1, 0)
-        vertex([1, 1, -1], [1, 0]),
-        vertex([-1, 1, -1], [0, 0]),
-        vertex([-1, 1, 1], [0, 1]),
-        vertex([1, 1, 1], [1, 1]),
-        // back (0, -1, 0)
-        vertex([1, -1, 1], [0, 0]),
-        vertex([-1, -1, 1], [1, 0]),
-        vertex([-1, -1, -1], [1, 1]),
-        vertex([1, -1, -1], [0, 1]),
-    ];
-
-    let index_data: &[u16] = &[
-        0, 1, 2, 2, 3, 0, // top
-        4, 5, 6, 6, 7, 4, // bottom
-        8, 9, 10, 10, 11, 8, // right
-        12, 13, 14, 14, 15, 12, // left
-        16, 17, 18, 18, 19, 16, // front
-        20, 21, 22, 22, 23, 20, // back
-    ];
-
-    let mut vd = Vec::with_capacity(vertex_data.len() * 4);
-    vd.extend_from_slice(&vertex_data);
-    vd.extend(vertex_data.iter().cloned().map(|mut it| {
-        it.pos[0] += 2.2;
-        it
-    }));
-    vd.extend(vertex_data.iter().cloned().map(|mut it| {
-        it.pos[1] += 2.2;
-        it
-    }));
-    vd.extend(vertex_data.iter().cloned().map(|mut it| {
-        it.pos[2] += 2.2;
-        it
-    }));
-
-    let mut id = Vec::with_capacity(index_data.len() * 4);
-    id.extend_from_slice(&index_data);
-    id.extend(index_data.iter().map(|it| it + vertex_data.len() as u16));
-    id.extend(index_data.iter().map(|it| it + (vertex_data.len() * 2) as u16));
-    id.extend(index_data.iter().map(|it| it + (vertex_data.len() * 3) as u16));
-
-    (vd, id)
 }
 
 fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
@@ -181,19 +113,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     surface.configure(&device, &config);
 
     let vertex_size = mem::size_of::<Vertex>();
-    let (vertex_data, index_data) = create_vertices();
-
-    let vertex_buf = device.create_buffer_init(&BufferInitDescriptor {
-        label: Some("Vertex Buffer"),
-        contents: bytemuck::cast_slice(&vertex_data),
-        usage: BufferUsages::VERTEX,
-    });
-
-    let index_buf = device.create_buffer_init(&BufferInitDescriptor {
-        label: Some("Index Buffer"),
-        contents: bytemuck::cast_slice(&index_data),
-        usage: BufferUsages::INDEX,
-    });
 
     let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: None,
@@ -294,6 +213,29 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let delta_time = Duration::from_millis(16).as_secs_f32();
 
+    let mut world = World::default();
+
+    {
+        let position = ChunkPosition(UVec3::new(0, 0, 0));
+        let mut chunk = Chunk::default();
+        chunk.blocks[0][0][0] = Block::Dirt;
+        chunk.blocks[1][0][0] = Block::Dirt;
+        chunk.blocks[0][2][0] = Block::Dirt;
+        chunk.blocks[0][0][3] = Block::Dirt;
+        chunk.blocks[15][15][15] = Block::Dirt;
+        world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
+        world.add_chunk(position, chunk);
+    }
+    {
+        let position = ChunkPosition(UVec3::new(1, 0, 0));
+        let mut chunk = Chunk::default();
+        chunk.blocks[0][0][0] = Block::Dirt;
+        chunk.blocks[1][0][0] = Block::Dirt;
+        chunk.blocks[15][15][15] = Block::Dirt;
+        world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
+        world.add_chunk(position, chunk);
+    }
+
     let mut is_locked = false;
     event_loop.run(move |event, target| {
         let id = window.id();
@@ -329,42 +271,48 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         queue.write_buffer(&uniform_buf, 0, &bytemuck::cast_slice(mx_ref));
 
                         {
-                            let mut rpass =
-                                encoder.begin_render_pass(&RenderPassDescriptor {
-                                    label: None,
-                                    color_attachments: &[Some(RenderPassColorAttachment {
-                                        view: &view,
-                                        resolve_target: None,
-                                        ops: Operations {
-                                            load: LoadOp::Clear(Color {
-                                                r: 238.0 / 255.0,
-                                                g: 238.0 / 255.0,
-                                                b: 238.0 / 255.0,
-                                                a: 1.0,
-                                            }),
-                                            store: StoreOp::Store,
-                                        },
-                                    })],
-                                    depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
-                                        view: &depth.1,
-                                        depth_ops: Some(Operations {
-                                            load: LoadOp::Clear(1.0),
-                                            store: StoreOp::Store,
+                            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                                label: Some("render world"),
+                                color_attachments: &[Some(RenderPassColorAttachment {
+                                    view: &view,
+                                    resolve_target: None,
+                                    ops: Operations {
+                                        load: LoadOp::Clear(Color {
+                                            r: 238.0 / 255.0,
+                                            g: 238.0 / 255.0,
+                                            b: 238.0 / 255.0,
+                                            a: 1.0,
                                         }),
-                                        stencil_ops: None,
+                                        store: StoreOp::Store,
+                                    },
+                                })],
+                                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                                    view: &depth.1,
+                                    depth_ops: Some(Operations {
+                                        load: LoadOp::Clear(1.0),
+                                        store: StoreOp::Store,
                                     }),
-                                    timestamp_writes: None,
-                                    occlusion_query_set: None,
-                                });
+                                    stencil_ops: None,
+                                }),
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                            });
 
-                            rpass.push_debug_group("Prepare data for draw.");
-                            rpass.set_pipeline(&render_pipeline);
-                            rpass.set_bind_group(0, &bind_group, &[]);
-                            rpass.set_index_buffer(index_buf.slice(..), IndexFormat::Uint16);
-                            rpass.set_vertex_buffer(0, vertex_buf.slice(..));
-                            rpass.pop_debug_group();
-                            rpass.insert_debug_marker("Draw!");
-                            rpass.draw_indexed(0..index_data.len() as u32, 0, 0..1);
+                            pass.push_debug_group("chunks setup");
+                            pass.set_pipeline(&render_pipeline);
+                            pass.set_bind_group(0, &bind_group, &[]);
+                            pass.pop_debug_group();
+                            pass.insert_debug_marker("before chunks");
+
+                            for (position, mesh) in world.iter_chunk_meshes() {
+                                pass.push_debug_group(&format!("Blocks of chunk {position:?}"));
+                                pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint16);
+                                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                pass.pop_debug_group();
+                                pass.insert_debug_marker(&format!("Drawing chunk {position:?}"));
+                                pass.draw_indexed(0..mesh.index_count as u32, 0, 0..1);
+                            }
+
                         }
 
                         queue.submit(Some(encoder.finish()));
