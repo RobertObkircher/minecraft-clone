@@ -20,5 +20,8 @@ fn vs_main(
 
 @fragment
 fn fs_main(vertex: VertexOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(vertex.tex_coord.x, vertex.tex_coord.y, 0.5, 1.0);
+    if any(vertex.tex_coord < vec2<f32>(0.1, 0.1)) || any(vertex.tex_coord > vec2<f32>(0.9, 0.9)) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    }
+    return vec4<f32>(vertex.tex_coord.x * 0.1, mix(0.4, 1.0, vertex.tex_coord.y), 0.3, 1.0);
 }

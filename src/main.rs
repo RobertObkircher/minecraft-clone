@@ -4,7 +4,7 @@ use std::mem;
 use std::time::Duration;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{Mat4, UVec3, Vec3};
+use glam::{IVec3, Mat4, Vec3};
 use log::info;
 use pollster;
 use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BufferAddress, BufferBindingType, BufferSize, BufferUsages, Color, CommandEncoderDescriptor, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, Face, Features, FragmentState, IndexFormat, Instance, Limits, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode};
@@ -15,14 +15,15 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, Window, WindowBuilder};
 
 use crate::camera::Camera;
-use crate::chunk::{Block, Chunk};
 use crate::mesh::ChunkMesh;
+use crate::terrain::fill_chunk;
 use crate::world::{ChunkPosition, World};
 
 mod camera;
 mod world;
 mod chunk;
 mod mesh;
+mod terrain;
 
 fn main() {
     env_logger::init();
@@ -215,25 +216,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let mut world = World::default();
 
-    {
-        let position = ChunkPosition(UVec3::new(0, 0, 0));
-        let mut chunk = Chunk::default();
-        chunk.blocks[0][0][0] = Block::Dirt;
-        chunk.blocks[1][0][0] = Block::Dirt;
-        chunk.blocks[0][2][0] = Block::Dirt;
-        chunk.blocks[0][0][3] = Block::Dirt;
-        chunk.blocks[15][15][15] = Block::Dirt;
-        world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
-        world.add_chunk(position, chunk);
-    }
-    {
-        let position = ChunkPosition(UVec3::new(1, 0, 0));
-        let mut chunk = Chunk::default();
-        chunk.blocks[0][0][0] = Block::Dirt;
-        chunk.blocks[1][0][0] = Block::Dirt;
-        chunk.blocks[15][15][15] = Block::Dirt;
-        world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
-        world.add_chunk(position, chunk);
+    let a = 2;
+    for x in -a..a {
+        for y in -a..a {
+            for z in -a..a {
+                let position = ChunkPosition(IVec3::new(x, y, z));
+                let chunk = fill_chunk(position);
+                world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
+                world.add_chunk(position, chunk);
+            }
+        }
     }
 
     let mut is_locked = false;

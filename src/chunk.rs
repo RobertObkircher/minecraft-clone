@@ -23,3 +23,11 @@ pub enum Block {
     Dirt,
 }
 
+impl Block {
+    pub fn transparent(&self) -> bool {
+        match self {
+            Block::Air => true,
+            Block::Dirt => false,
+        }
+    }
+}

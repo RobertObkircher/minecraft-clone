@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use glam::UVec3;
+use glam::IVec3;
 
 use crate::chunk::Chunk;
 use crate::mesh::ChunkMesh;
@@ -32,10 +32,10 @@ impl World {
 struct ChunkIndex(u32);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct ChunkPosition(pub UVec3);
+pub struct ChunkPosition(pub IVec3);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct BlockPosition(pub UVec3);
+pub struct BlockPosition(pub IVec3);
 
 impl Default for World {
     fn default() -> Self {

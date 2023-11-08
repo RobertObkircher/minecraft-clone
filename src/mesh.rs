@@ -17,20 +17,31 @@ impl ChunkMesh {
         let mut is: Vec<u16> = vec![];
 
         // TODO this should be a uniform
-        let offset = position.0 * Chunk::SIZE as u32;
+        let offset = position.0 * Chunk::SIZE as i32;
         for x in 0..Chunk::SIZE {
             for y in 0..Chunk::SIZE {
                 for z in 0..Chunk::SIZE {
-                    if let Block::Dirt = chunk.blocks[x][y][z] {
-                        let (mut vertex_data, index_data) = create_vertices();
+                    let visible = x == 0 || x == Chunk::SIZE - 1
+                        || y == 0 || y == Chunk::SIZE - 1
+                        || z == 0 || z == Chunk::SIZE - 1
+                        || chunk.blocks[x - 1][y][z].transparent()
+                        || chunk.blocks[x + 1][y][z].transparent()
+                        || chunk.blocks[x][y - 1][z].transparent()
+                        || chunk.blocks[x][y + 1][z].transparent()
+                        || chunk.blocks[x][y][z - 1].transparent()
+                        || chunk.blocks[x][y][z + 1].transparent();
+                    if visible {
+                        if let Block::Dirt = chunk.blocks[x][y][z] {
+                            let (mut vertex_data, index_data) = create_vertices();
 
-                        is.extend(index_data.iter().map(|i| i + u16::try_from(vs.len()).unwrap()));
-                        for v in vertex_data.iter_mut() {
-                            v.pos[0] += x as f32 + offset.x as f32;
-                            v.pos[1] += y as f32 + offset.y as f32;
-                            v.pos[2] += z as f32 + offset.z as f32;
+                            is.extend(index_data.iter().map(|i| i + u16::try_from(vs.len()).unwrap()));
+                            for v in vertex_data.iter_mut() {
+                                v.pos[0] += x as f32 + offset.x as f32;
+                                v.pos[1] += y as f32 + offset.y as f32;
+                                v.pos[2] += z as f32 + offset.z as f32;
+                            }
+                            vs.extend_from_slice(&vertex_data);
                         }
-                        vs.extend_from_slice(&vertex_data);
                     }
                 }
             }
