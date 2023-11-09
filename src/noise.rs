@@ -21,8 +21,8 @@ impl ImprovedNoise {
     pub fn noise(&self, mut x: f64, mut y: f64, mut z: f64) -> f64 {
         // FIND UNIT CUBE THAT CONTAINS POINT.
         let X = Wrapping(x.floor() as i32 as u8);
-        let Y = Wrapping(x.floor() as i32 as u8);
-        let Z = Wrapping(x.floor() as i32 as u8);
+        let Y = Wrapping(y.floor() as i32 as u8);
+        let Z = Wrapping(z.floor() as i32 as u8);
 
         // FIND RELATIVE X,Y,Z OF POINT IN CUBE.
         x -= x.floor();
