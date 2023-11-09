@@ -64,7 +64,7 @@ impl TerrainGenerator {
         result
     }
 
-    pub fn fill_chunk(&mut self, position: ChunkPosition) -> Chunk {
+    pub fn fill_chunk(&mut self, position: ChunkPosition) -> Option<Chunk> {
         let mut result = Chunk::default();
 
         let mut random = random(position, self.world_seed, Usage::FillChunk);
@@ -72,6 +72,8 @@ impl TerrainGenerator {
         let position = position.block().index();
 
         let noise = ImprovedNoise::new(&mut random);
+        let mut is_air = true;
+
         for x in 0..Chunk::SIZE {
             for y in 0..Chunk::SIZE {
                 for z in 0..Chunk::SIZE {
@@ -89,6 +91,7 @@ impl TerrainGenerator {
                     let density = base_density + noise * 0.0;
 
                     result.blocks[x][y][z] = if density > 0.0 {
+                        is_air = false;
                         Block::Dirt
                     } else {
                         Block::Air
@@ -97,9 +100,13 @@ impl TerrainGenerator {
             }
         }
 
+        if is_air {
+            return None;
+        }
+
         result.clear_transparency();
         result.compute_transparency();
 
-        result
+        Some(result)
     }
 }

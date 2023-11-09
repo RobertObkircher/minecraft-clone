@@ -13,9 +13,23 @@ pub struct World {
 }
 
 impl World {
+    pub fn new() -> Self {
+        let mut chunk = Chunk::default();
+        chunk.transparency = !0u8;
+        Self {
+            chunks: vec![chunk],
+            position_to_index: Default::default(),
+            position_to_mesh: Default::default(),
+        }
+    }
     pub fn add_chunk(&mut self, position: ChunkPosition, chunk: Chunk) {
         let index = ChunkIndex(self.chunks.len().try_into().unwrap());
         self.chunks.push(chunk);
+        self.position_to_index.insert(position, index);
+    }
+
+    pub fn add_air_chunk(&mut self, position: ChunkPosition) {
+        let index = ChunkIndex(0);
         self.position_to_index.insert(position, index);
     }
 
@@ -112,15 +126,5 @@ fn test_position() {
     for i in 0..cs {
         let position = BlockPosition(IVec3::splat(i32::MAX - i));
         assert_eq!(position.chunk().0 * cs, IVec3::MAX - cs + 1);
-    }
-}
-
-impl Default for World {
-    fn default() -> Self {
-        Self {
-            chunks: vec![],
-            position_to_index: Default::default(),
-            position_to_mesh: Default::default(),
-        }
     }
 }

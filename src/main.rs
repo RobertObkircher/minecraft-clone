@@ -216,7 +216,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let delta_time = Duration::from_millis(16).as_secs_f32();
 
-    let mut world = World::default();
+    let mut world = World::new();
     let mut terrain = TerrainGenerator::new(WorldSeed(42));
 
     let a = 6;
@@ -232,9 +232,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     }
                 }
 
-                let chunk = terrain.fill_chunk(position);
-                world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
-                world.add_chunk(position, chunk);
+                if let Some(chunk) = terrain.fill_chunk(position) {
+                    world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
+                    world.add_chunk(position, chunk);
+                } else {
+                    world.add_air_chunk(position);
+                }
             }
         }
     }
