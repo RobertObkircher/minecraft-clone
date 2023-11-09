@@ -1,7 +1,8 @@
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
 use rand::rngs::StdRng;
 
 use crate::chunk::{Block, Chunk};
+use crate::noise::ImprovedNoise;
 use crate::world::ChunkPosition;
 
 #[derive(Copy, Clone, Debug)]
@@ -48,18 +49,24 @@ impl TerrainGenerator {
         let mut random = random(position, self.world_seed, Usage::FillChunk);
 
         let position = position.block().index();
-        let average_height = random.gen_range(0..7);
+        let average_height = 0; // random.gen_range(0..7);
 
+        let noise = ImprovedNoise::new(&mut random);
         for x in 0..Chunk::SIZE {
-            for z in 0..Chunk::SIZE {
-                let height = average_height + random.gen_range(-0..=1);
-
-                for y in 0..Chunk::SIZE {
-                    let _block_x = position.x + x as i32;
+            for y in 0..Chunk::SIZE {
+                for z in 0..Chunk::SIZE {
+                    let block_x = position.x + x as i32;
                     let block_y = position.y + y as i32;
-                    let _block_z = position.z + z as i32;
+                    let block_z = position.z + z as i32;
 
-                    result.blocks[x][y][z] = if block_y <= height {
+                    let delta_h = (average_height - block_y) as f64;
+                    let base_density = delta_h / 127.0;
+
+                    let noise  = noise.noise(block_x as f64 * 0.1, block_y as f64 * 0.1, block_z as f64 * 0.1);
+
+                    let density = base_density + noise * 0.1;
+
+                    result.blocks[x][y][z] = if density > 0.0 {
                         Block::Dirt
                     } else {
                         Block::Air

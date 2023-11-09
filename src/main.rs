@@ -218,7 +218,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut world = World::default();
     let mut terrain = TerrainGenerator::new(WorldSeed(42));
 
-    let a = 2;
+    let a = 4;
     for x in -a..a {
         for y in -a..a {
             for z in -a..a {
