@@ -16,7 +16,7 @@ use winit::window::{CursorGrabMode, Window, WindowBuilder};
 
 use crate::camera::Camera;
 use crate::mesh::ChunkMesh;
-use crate::terrain::fill_chunk;
+use crate::terrain::{TerrainGenerator, WorldSeed};
 use crate::world::{ChunkPosition, World};
 
 mod camera;
@@ -215,13 +215,14 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let delta_time = Duration::from_millis(16).as_secs_f32();
 
     let mut world = World::default();
+    let mut terrain = TerrainGenerator::new(WorldSeed(42));
 
     let a = 2;
     for x in -a..a {
         for y in -a..a {
             for z in -a..a {
-                let position = ChunkPosition(IVec3::new(x, y, z));
-                let chunk = fill_chunk(position);
+                let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
+                let chunk = terrain.fill_chunk(position);
                 world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
                 world.add_chunk(position, chunk);
             }
@@ -304,7 +305,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 pass.insert_debug_marker(&format!("Drawing chunk {position:?}"));
                                 pass.draw_indexed(0..mesh.index_count as u32, 0, 0..1);
                             }
-
                         }
 
                         queue.submit(Some(encoder.finish()));

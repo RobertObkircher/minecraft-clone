@@ -17,7 +17,7 @@ impl ChunkMesh {
         let mut is: Vec<u16> = vec![];
 
         // TODO this should be a uniform
-        let offset = position.0 * Chunk::SIZE as i32;
+        let offset = position.block().index();
         for x in 0..Chunk::SIZE {
             for y in 0..Chunk::SIZE {
                 for z in 0..Chunk::SIZE {

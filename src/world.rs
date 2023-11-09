@@ -32,10 +32,26 @@ impl World {
 struct ChunkIndex(u32);
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct ChunkPosition(pub IVec3);
+pub struct ChunkPosition(IVec3);
+
+impl ChunkPosition {
+    pub fn from_chunk_index(index: IVec3) -> Self {
+        Self(index)
+    }
+
+    pub fn block(self) -> BlockPosition {
+        return BlockPosition(self.0 * Chunk::SIZE as i32);
+    }
+}
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct BlockPosition(pub IVec3);
+pub struct BlockPosition(IVec3);
+
+impl BlockPosition {
+    pub fn index(self) -> IVec3 {
+        self.0
+    }
+}
 
 impl Default for World {
     fn default() -> Self {
