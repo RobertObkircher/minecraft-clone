@@ -51,6 +51,54 @@ impl BlockPosition {
     pub fn index(self) -> IVec3 {
         self.0
     }
+
+    pub fn chunk(self) -> ChunkPosition {
+        // copied from standard library to avoid overflow checks in debug builds
+        pub const fn div_floor(lhs: i32, rhs: i32) -> i32 {
+            let d = lhs.wrapping_div(rhs);
+            let r = lhs.wrapping_rem(rhs);
+            if (r > 0 && rhs < 0) || (r < 0 && rhs > 0) {
+                d.wrapping_sub(1)
+            } else {
+                d
+            }
+        }
+        ChunkPosition::from_chunk_index(IVec3 {
+            x: div_floor(self.0.x, Chunk::SIZE as i32),
+            y: div_floor(self.0.y, Chunk::SIZE as i32),
+            z: div_floor(self.0.z, Chunk::SIZE as i32),
+        })
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_position() {
+    let cs = Chunk::SIZE as i32;
+    for i in 0..cs {
+        let position = BlockPosition(IVec3::splat(i32::MIN + i));
+        assert_eq!(position.chunk().0 * cs, IVec3::MIN);
+    }
+    for i in 0..cs {
+        let position = BlockPosition(IVec3::splat(i32::MIN + cs + i));
+        assert_eq!(position.chunk().0 * cs, IVec3::MIN + cs);
+    }
+    for i in 0..cs {
+        let position = BlockPosition(IVec3::splat(-cs + i));
+        assert_eq!(position.chunk().0 * cs, IVec3::splat(-cs));
+    }
+    for i in 0..cs {
+        let position = BlockPosition(IVec3::splat(i));
+        assert_eq!(position.chunk().0 * 8, IVec3::ZERO);
+    }
+    for i in 0..cs {
+        let position = BlockPosition(IVec3::splat(cs + i));
+        assert_eq!(position.chunk().0 * cs, IVec3::splat(cs));
+    }
+    for i in 0..cs {
+        let position = BlockPosition(IVec3::splat(i32::MAX - i));
+        assert_eq!(position.chunk().0 * cs, IVec3::MAX - cs + 1);
+    }
 }
 
 impl Default for World {
