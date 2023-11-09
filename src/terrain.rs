@@ -47,6 +47,23 @@ impl TerrainGenerator {
             global_noise,
         }
     }
+
+    fn height(&self, x: f64, z: f64, num_octaves: usize) -> f64 {
+        let mut result = 0.0;
+        let mut amplitude = 1.0;
+        let mut frequency = 0.005;
+
+        for _ in 0..num_octaves {
+            let n = amplitude * self.global_noise.noise_2d(x * frequency, z * frequency);
+            result += n;
+
+            amplitude *= 0.5;
+            frequency *= 2.0;
+        }
+
+        result
+    }
+
     pub fn fill_chunk(&mut self, position: ChunkPosition) -> Chunk {
         let mut result = Chunk::default();
 
@@ -62,7 +79,7 @@ impl TerrainGenerator {
                     let block_y = position.y + y as i32;
                     let block_z = position.z + z as i32;
 
-                    let global_height = self.global_noise.noise_2d(block_x as f64 * 0.005, block_z as f64 * 0.005) * 40.0;
+                    let global_height = self.height(block_x as f64, block_z as f64, 4) * 40.0;
 
                     let delta_h = global_height - block_y as f64;
                     let base_density = delta_h / 127.0;

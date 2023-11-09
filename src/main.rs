@@ -50,7 +50,7 @@ struct Vertex {
 
 fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
     let fov_y_radians = PI / 4.0;
-    let projection = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 100.0);
+    let projection = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 1000.0);
 
     let vs = camera.computed_vectors();
     let view = Mat4::look_to_rh(camera.position, vs.direction, vs.up);
