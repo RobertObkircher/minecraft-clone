@@ -97,6 +97,9 @@ impl TerrainGenerator {
             }
         }
 
+        result.clear_transparency();
+        result.compute_transparency();
+
         result
     }
 }

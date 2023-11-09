@@ -15,6 +15,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, Window, WindowBuilder};
 
 use crate::camera::Camera;
+use crate::chunk::Transparency;
 use crate::mesh::ChunkMesh;
 use crate::terrain::{TerrainGenerator, WorldSeed};
 use crate::world::{ChunkPosition, World};
@@ -219,10 +220,18 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut terrain = TerrainGenerator::new(WorldSeed(42));
 
     let a = 6;
-    for x in -a..a {
-        for y in -a/2..a/2 {
-            for z in -a..a {
+    for x in -a..=a {
+        'next_z: for z in -a..=a {
+            for y in -a / 2..=a / 2 {
+                let y = -y;
                 let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
+
+                if let Some(above) = world.get_chunk(position.plus(IVec3::Y)) {
+                    if above.get_transparency(Transparency::Computed) && !above.get_transparency(Transparency::PosY) {
+                        continue 'next_z;
+                    }
+                }
+
                 let chunk = terrain.fill_chunk(position);
                 world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
                 world.add_chunk(position, chunk);

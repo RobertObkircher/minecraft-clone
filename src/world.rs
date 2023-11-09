@@ -26,6 +26,10 @@ impl World {
     pub fn iter_chunk_meshes(&self) -> impl Iterator<Item=(&ChunkPosition, &ChunkMesh)> {
         self.position_to_mesh.iter()
     }
+
+    pub fn get_chunk(&self, position: ChunkPosition) -> Option<&Chunk> {
+        self.position_to_index.get(&position).map(|it| &self.chunks[it.0 as usize])
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -41,6 +45,11 @@ impl ChunkPosition {
 
     pub fn block(self) -> BlockPosition {
         return BlockPosition(self.0 * Chunk::SIZE as i32);
+    }
+
+    #[must_use]
+    pub fn plus(self, direction: IVec3) -> Self {
+        self.block().plus(direction.wrapping_mul(IVec3::splat(Chunk::SIZE as i32))).chunk()
     }
 }
 
@@ -68,6 +77,11 @@ impl BlockPosition {
             y: div_floor(self.0.y, Chunk::SIZE as i32),
             z: div_floor(self.0.z, Chunk::SIZE as i32),
         })
+    }
+
+    #[must_use]
+    pub fn plus(self, direction: IVec3) -> BlockPosition {
+        BlockPosition(self.0.wrapping_add(direction))
     }
 }
 
