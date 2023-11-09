@@ -15,7 +15,7 @@ enum Usage {
 fn random(position: ChunkPosition, world_seed: WorldSeed, usage: Usage) -> StdRng {
     let position = position.block().index();
 
-    let mut seed = [0xA5u8; 32];
+    let mut seed = [0u8; 32];
     seed[0..8].copy_from_slice(&world_seed.0.to_le_bytes());
     seed[8..12].copy_from_slice(&position.x.to_le_bytes());
     seed[12..16].copy_from_slice(&position.y.to_le_bytes());
@@ -24,6 +24,9 @@ fn random(position: ChunkPosition, world_seed: WorldSeed, usage: Usage) -> StdRn
     match usage {
         Usage::FillChunk => { seed[20] = 42; }
     }
+
+    // balance out bits around (0, 0, 0) coordinates
+    seed.iter_mut().for_each(|it| *it ^= 0xA5);
 
     StdRng::from_seed(seed)
 }
