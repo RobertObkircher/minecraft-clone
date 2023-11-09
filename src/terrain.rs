@@ -1,5 +1,6 @@
-use rand::SeedableRng;
+use glam::IVec3;
 use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 use crate::chunk::{Block, Chunk};
 use crate::noise::ImprovedNoise;
@@ -10,7 +11,8 @@ pub struct WorldSeed(pub usize);
 
 #[derive(Copy, Clone, Debug)]
 enum Usage {
-    FillChunk
+    FillChunk,
+    FillWorld,
 }
 
 fn random(position: ChunkPosition, world_seed: WorldSeed, usage: Usage) -> StdRng {
@@ -22,9 +24,7 @@ fn random(position: ChunkPosition, world_seed: WorldSeed, usage: Usage) -> StdRn
     seed[12..16].copy_from_slice(&position.y.to_le_bytes());
     seed[16..20].copy_from_slice(&position.z.to_le_bytes());
 
-    match usage {
-        Usage::FillChunk => { seed[20] = 42; }
-    }
+    seed[20] = usage as u8;
 
     // balance out bits around (0, 0, 0) coordinates
     seed.iter_mut().for_each(|it| *it ^= 0xA5);
@@ -35,12 +35,16 @@ fn random(position: ChunkPosition, world_seed: WorldSeed, usage: Usage) -> StdRn
 
 pub struct TerrainGenerator {
     world_seed: WorldSeed,
+    global_noise: ImprovedNoise,
 }
 
 impl TerrainGenerator {
     pub fn new(world_seed: WorldSeed) -> Self {
+        let mut random = random(ChunkPosition::from_chunk_index(IVec3::ZERO), world_seed, Usage::FillWorld);
+        let global_noise = ImprovedNoise::new(&mut random);
         Self {
             world_seed,
+            global_noise,
         }
     }
     pub fn fill_chunk(&mut self, position: ChunkPosition) -> Chunk {
@@ -49,7 +53,6 @@ impl TerrainGenerator {
         let mut random = random(position, self.world_seed, Usage::FillChunk);
 
         let position = position.block().index();
-        let average_height = 0; // random.gen_range(0..7);
 
         let noise = ImprovedNoise::new(&mut random);
         for x in 0..Chunk::SIZE {
@@ -59,12 +62,14 @@ impl TerrainGenerator {
                     let block_y = position.y + y as i32;
                     let block_z = position.z + z as i32;
 
-                    let delta_h = (average_height - block_y) as f64;
+                    let global_height = self.global_noise.noise_2d(block_x as f64 * 0.005, block_z as f64 * 0.005) * 40.0;
+
+                    let delta_h = global_height - block_y as f64;
                     let base_density = delta_h / 127.0;
 
-                    let noise  = noise.noise(block_x as f64 * 0.1, block_y as f64 * 0.1, block_z as f64 * 0.1);
+                    let noise = noise.noise(block_x as f64 * 0.1, block_y as f64 * 0.1, block_z as f64 * 0.1);
 
-                    let density = base_density + noise * 0.1;
+                    let density = base_density + noise * 0.0;
 
                     result.blocks[x][y][z] = if density > 0.0 {
                         Block::Dirt

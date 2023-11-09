@@ -218,9 +218,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut world = World::default();
     let mut terrain = TerrainGenerator::new(WorldSeed(42));
 
-    let a = 4;
+    let a = 6;
     for x in -a..a {
-        for y in -a..a {
+        for y in -a/2..a/2 {
             for z in -a..a {
                 let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
                 let chunk = terrain.fill_chunk(position);
