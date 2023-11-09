@@ -24,6 +24,7 @@ mod world;
 mod chunk;
 mod mesh;
 mod terrain;
+mod noise;
 
 fn main() {
     env_logger::init();
