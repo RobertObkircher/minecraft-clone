@@ -227,7 +227,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
 
                 if let Some(above) = world.get_chunk(position.plus(IVec3::Y)) {
-                    if above.get_transparency(Transparency::Computed) && !above.get_transparency(Transparency::PosY) {
+                    if above.get_transparency(Transparency::Computed) && !above.get_transparency(Transparency::NegY) {
                         continue 'next_z;
                     }
                 }

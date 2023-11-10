@@ -3,7 +3,6 @@ pub struct Chunk {
     pub transparency: u8,
 }
 
-#[allow(unused)]
 pub enum Transparency {
     PosX,
     NegX,
@@ -27,33 +26,29 @@ impl Chunk {
     pub fn compute_transparency(&mut self) {
         let mut transparency = 1 << (Transparency::Computed as u8);
 
-        'outer: for i in 0..6 {
-            let cs = Chunk::SIZE - 1;
-            let start = if i % 2 == 0 {
-                (0, 0, 0)
-            } else {
-                (cs, cs, cs)
-            };
-            let end = match i / 2 {
-                0 => (0, cs, cs),
-                1 => (cs, 0, 0),
-                2 => (cs, 0, cs),
-                3 => (0, cs, 0),
-                4 => (cs, cs, 0),
-                5 => (0, 0, cs),
-                _ => unreachable!()
-            };
-            for x in start.0..end.0 {
-                for y in start.0..end.0 {
-                    for z in start.0..end.0 {
-                        if self.blocks[x][y][z].transparent() {
-                            transparency |= 1 << i;
-                            continue 'outer;
+        let s = Chunk::SIZE;
+        let mut check = |(ox, oy, oz): (usize, usize, usize), (dx, dy, dz), t: Transparency| {
+            for x in (0..s).step_by(dx) {
+                for y in (0..s).step_by(dy) {
+                    for z in (0..s).step_by(dz) {
+                        if self.blocks[ox + x][oy + y][oz + z].transparent() {
+                            transparency |= 1 << t as u8;
+                            return;
                         }
                     }
                 }
             }
-        }
+        };
+
+        let o = s - 1;
+        check((o, 0, 0), (s, 1, 1), Transparency::PosX);
+        check((0, o, 0), (1, s, 1), Transparency::PosY);
+        check((0, 0, o), (1, 1, s), Transparency::PosZ);
+
+        check((0, 0, 0), (s, 1, 1), Transparency::NegX);
+        check((0, 0, 0), (1, s, 1), Transparency::NegY);
+        check((0, 0, 0), (1, 1, s), Transparency::NegZ);
+
         self.transparency = transparency;
     }
 }
