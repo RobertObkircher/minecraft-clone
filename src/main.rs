@@ -219,10 +219,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut world = World::new();
     let mut terrain = TerrainGenerator::new(WorldSeed(42));
 
-    let a = 6;
-    for x in -a..=a {
-        'next_z: for z in -a..=a {
-            for y in -a / 2..=a / 2 {
+    let view_distance = 10;
+    for x in -view_distance..=view_distance {
+        'next_z: for z in -view_distance..=view_distance {
+            for y in -view_distance / 2..=view_distance / 2 {
                 let y = -y;
                 let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
 
