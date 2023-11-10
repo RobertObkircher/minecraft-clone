@@ -219,28 +219,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut world = World::new();
     let mut terrain = TerrainGenerator::new(WorldSeed(42));
 
-    let view_distance = 10;
+    let mut world_gen_queue = Vec::<(i32, i32)>::new();
+    let view_distance = 12;
     for x in -view_distance..=view_distance {
-        'next_z: for z in -view_distance..=view_distance {
-            for y in -view_distance / 2..=view_distance / 2 {
-                let y = -y;
-                let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
-
-                if let Some(above) = world.get_chunk(position.plus(IVec3::Y)) {
-                    if above.get_transparency(Transparency::Computed) && !above.get_transparency(Transparency::NegY) {
-                        continue 'next_z;
-                    }
-                }
-
-                if let Some(chunk) = terrain.fill_chunk(position) {
-                    world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
-                    world.add_chunk(position, chunk);
-                } else {
-                    world.add_air_chunk(position);
-                }
-            }
+        for z in -view_distance..=view_distance {
+            world_gen_queue.push((x, z));
         }
     }
+    world_gen_queue.sort_by_key(|(x, z)| -(x * x + z * z));
+
 
     let mut is_locked = false;
     event_loop.run(move |event, target| {
@@ -261,6 +248,26 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         target.exit();
                     }
                     WindowEvent::RedrawRequested => {
+                        if let Some((x, z)) = world_gen_queue.pop() {
+                            for y in -view_distance / 2..=view_distance / 2 {
+                                let y = -y;
+                                let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
+
+                                if let Some(above) = world.get_chunk(position.plus(IVec3::Y)) {
+                                    if above.get_transparency(Transparency::Computed) && !above.get_transparency(Transparency::NegY) {
+                                        break;
+                                    }
+                                }
+
+                                if let Some(chunk) = terrain.fill_chunk(position) {
+                                    world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
+                                    world.add_chunk(position, chunk);
+                                } else {
+                                    world.add_air_chunk(position);
+                                }
+                            }
+                        }
+
                         let frame = surface
                             .get_current_texture()
                             .expect("Failed to acquire next swap chain texture");
@@ -356,7 +363,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 "d" => camera.position += vectors.right * speed,
                                 _ => {}
                             }
-                            dbg!(&camera);
                         }
                     }
                     _ => {}
@@ -369,7 +375,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             let speed = delta_time * 0.1;
                             camera.turn_right(delta.0 as f32 * speed);
                             camera.turn_up(-delta.1 as f32 * speed);
-                            dbg!(&camera);
                         }
                     }
                     _ => {}
