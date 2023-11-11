@@ -19,45 +19,50 @@ pub struct ChunkMesh {
 impl ChunkMesh {
     pub fn new(device: &Device, position: ChunkPosition, chunk: &Chunk, bind_group_layout: &BindGroupLayout) -> (ChunkMesh, ChunkMeshInfo) {
         let start = Instant::now();
-        let mut vs = vec![];
-        let mut is: Vec<u16> = vec![];
+        let mut vertices = vec![];
+        let mut indices: Vec<u16> = vec![];
 
         for x in 0..Chunk::SIZE {
             for y in 0..Chunk::SIZE {
                 for z in 0..Chunk::SIZE {
-                    let visible = x == 0 || x == Chunk::SIZE - 1
-                        || y == 0 || y == Chunk::SIZE - 1
-                        || z == 0 || z == Chunk::SIZE - 1
-                        || chunk.blocks[x - 1][y][z].transparent()
-                        || chunk.blocks[x + 1][y][z].transparent()
-                        || chunk.blocks[x][y - 1][z].transparent()
-                        || chunk.blocks[x][y + 1][z].transparent()
-                        || chunk.blocks[x][y][z - 1].transparent()
-                        || chunk.blocks[x][y][z + 1].transparent();
-                    if visible {
-                        if let Block::Dirt = chunk.blocks[x][y][z] {
-                            let (mut vertex_data, index_data) = create_vertices();
+                    if let Block::Air = chunk.blocks[x][y][z] {
+                        continue;
+                    }
 
-                            is.extend(index_data.iter().map(|i| i + u16::try_from(vs.len()).unwrap()));
-                            for v in vertex_data.iter_mut() {
+                    let mut add_face = |is: [u16; 6], visible: bool| {
+                        if visible {
+                            let offset = u16::try_from(vertices.len()).unwrap();
+                            indices.extend((0..6).map(|i| i + offset));
+                            vertices.extend(is.iter().map(|i| {
+                                let mut v = VERTICES[*i as usize];
                                 v.pos[0] += x as f32;
                                 v.pos[1] += y as f32;
                                 v.pos[2] += z as f32;
-                            }
-                            vs.extend_from_slice(&vertex_data);
+                                v
+                            }));
                         }
-                    }
+                    };
+                    let last = Chunk::SIZE - 1;
+
+                    add_face([0, 1, 2, 2, 3, 0], z == last || chunk.blocks[x][y][z + 1].transparent());
+                    add_face([4, 5, 6, 6, 7, 4], z == 0 || chunk.blocks[x][y][z - 1].transparent());
+
+                    add_face([8, 9, 10, 10, 11, 8], x == last || chunk.blocks[x + 1][y][z].transparent());
+                    add_face([12, 13, 14, 14, 15, 12], x == 0 || chunk.blocks[x - 1][y][z].transparent());
+
+                    add_face([16, 17, 18, 18, 19, 16], y == last || chunk.blocks[x][y + 1][z].transparent());
+                    add_face([20, 21, 22, 22, 23, 20], y == 0 || chunk.blocks[x][y - 1][z].transparent());
                 }
             }
         }
         let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Chunk Vertex Buffer"),
-            contents: bytemuck::cast_slice(&vs),
+            contents: bytemuck::cast_slice(&vertices),
             usage: BufferUsages::VERTEX,
         });
         let index_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Chunk Index Buffer"),
-            contents: bytemuck::cast_slice(&is),
+            contents: bytemuck::cast_slice(&indices),
             usage: BufferUsages::INDEX,
         });
 
@@ -83,57 +88,50 @@ impl ChunkMesh {
             index_buffer,
             uniform_buffer,
             bind_group,
-            index_count: is.len().try_into().unwrap(),
+            index_count: indices.len().try_into().unwrap(),
         }, ChunkMeshInfo {
             time: start.elapsed(),
-            face_count: is.len() / 6,
+            face_count: indices.len() / 6,
         })
     }
 }
 
-fn vertex(pos: [i8; 3], tc: [i8; 2]) -> Vertex {
+const fn vertex(pos: [i8; 3], tc: [i8; 2]) -> Vertex {
     Vertex {
         pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32, 1.0],
         tex_coord: [tc[0] as f32, tc[1] as f32],
     }
 }
 
-fn create_vertices() -> (Vec<Vertex>, Vec<u16>) {
-    let vertex_data = [
-        vertex([0, 0, 1], [0, 0]),
-        vertex([1, 0, 1], [1, 0]),
-        vertex([1, 1, 1], [1, 1]),
-        vertex([0, 1, 1], [0, 1]),
-        vertex([0, 1, 0], [1, 0]),
-        vertex([1, 1, 0], [0, 0]),
-        vertex([1, 0, 0], [0, 1]),
-        vertex([0, 0, 0], [1, 1]),
-        vertex([1, 0, 0], [0, 0]),
-        vertex([1, 1, 0], [1, 0]),
-        vertex([1, 1, 1], [1, 1]),
-        vertex([1, 0, 1], [0, 1]),
-        vertex([0, 0, 1], [1, 0]),
-        vertex([0, 1, 1], [0, 0]),
-        vertex([0, 1, 0], [0, 1]),
-        vertex([0, 0, 0], [1, 1]),
-        vertex([1, 1, 0], [1, 0]),
-        vertex([0, 1, 0], [0, 0]),
-        vertex([0, 1, 1], [0, 1]),
-        vertex([1, 1, 1], [1, 1]),
-        vertex([1, 0, 1], [0, 0]),
-        vertex([0, 0, 1], [1, 0]),
-        vertex([0, 0, 0], [1, 1]),
-        vertex([1, 0, 0], [0, 1]),
-    ];
-
-    let index_data: &[u16] = &[
-        0, 1, 2, 2, 3, 0, // top
-        4, 5, 6, 6, 7, 4, // bottom
-        8, 9, 10, 10, 11, 8, // right
-        12, 13, 14, 14, 15, 12, // left
-        16, 17, 18, 18, 19, 16, // front
-        20, 21, 22, 22, 23, 20, // back
-    ];
-
-    (vertex_data.to_vec(), index_data.to_vec())
-}
+const VERTICES: [Vertex; 24] = [
+    // POS_Z
+    vertex([0, 0, 1], [0, 0]),
+    vertex([1, 0, 1], [1, 0]),
+    vertex([1, 1, 1], [1, 1]),
+    vertex([0, 1, 1], [0, 1]),
+    // NEG_Z
+    vertex([0, 1, 0], [1, 0]),
+    vertex([1, 1, 0], [0, 0]),
+    vertex([1, 0, 0], [0, 1]),
+    vertex([0, 0, 0], [1, 1]),
+    // POS_X
+    vertex([1, 0, 0], [0, 0]),
+    vertex([1, 1, 0], [1, 0]),
+    vertex([1, 1, 1], [1, 1]),
+    vertex([1, 0, 1], [0, 1]),
+    // NEG_X
+    vertex([0, 0, 1], [1, 0]),
+    vertex([0, 1, 1], [0, 0]),
+    vertex([0, 1, 0], [0, 1]),
+    vertex([0, 0, 0], [1, 1]),
+    // POS_Y
+    vertex([1, 1, 0], [1, 0]),
+    vertex([0, 1, 0], [0, 0]),
+    vertex([0, 1, 1], [0, 1]),
+    vertex([1, 1, 1], [1, 1]),
+    // NEG_Y
+    vertex([1, 0, 1], [0, 0]),
+    vertex([0, 0, 1], [1, 0]),
+    vertex([0, 0, 0], [1, 1]),
+    vertex([1, 0, 0], [0, 1]),
+];
