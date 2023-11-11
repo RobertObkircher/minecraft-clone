@@ -268,6 +268,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     }
     world_gen_queue.sort_by_key(|(x, z)| -(x * x + z * z));
 
+    let mut start = Instant::now();
 
     let mut is_locked = false;
     event_loop.run(move |event, target| {
@@ -288,7 +289,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         target.exit();
                     }
                     WindowEvent::RedrawRequested => {
-                        let start = Instant::now();
+                        window.request_redraw();
 
                         if let Some((x, z)) = world_gen_queue.pop() {
                             for y in -view_distance / 2..=view_distance / 2 {
@@ -383,12 +384,13 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         queue.submit(Some(encoder.finish()));
                         frame.present();
 
-                        window.request_redraw();
+                        let frame_time = start.elapsed();
+                        start += frame_time;
 
                         statistics.end_frame(FrameInfo {
                             player_position: player_chunk.block().index().as_vec3() + camera.position,
                             player_orientation: camera.computed_vectors().direction,
-                            frame_time: start.elapsed(),
+                            frame_time,
                             chunk_info_count: statistics.chunk_infos.len(),
                             chunk_mesh_info_count: statistics.chunk_mesh_infos.len(),
                         });
