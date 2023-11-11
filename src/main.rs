@@ -51,6 +51,7 @@ fn main() {
 struct Vertex {
     pos: [f32; 4],
     tex_coord: [f32; 2],
+    face_index: u32,
 }
 
 fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
@@ -220,6 +221,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 format: VertexFormat::Float32x2,
                 offset: 4 * 4,
                 shader_location: 1,
+            },
+            VertexAttribute {
+                format: VertexFormat::Uint32,
+                offset: 4 * 4 + 2 * 4,
+                shader_location: 2,
             },
         ],
     }];

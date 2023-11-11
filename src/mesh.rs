@@ -29,29 +29,33 @@ impl ChunkMesh {
                         continue;
                     }
 
-                    let mut add_face = |is: [u16; 6], visible: bool| {
+                    let mut add_face = |is: [u16; 6], face_index: u32, visible: bool| {
                         if visible {
                             let offset = u16::try_from(vertices.len()).unwrap();
                             indices.extend((0..6).map(|i| i + offset));
                             vertices.extend(is.iter().map(|i| {
-                                let mut v = VERTICES[*i as usize];
-                                v.pos[0] += x as f32;
-                                v.pos[1] += y as f32;
-                                v.pos[2] += z as f32;
-                                v
+                                let (mut pos, tex_coord) = VERTICES[*i as usize];
+                                pos[0] += x as f32;
+                                pos[1] += y as f32;
+                                pos[2] += z as f32;
+                                Vertex {
+                                    pos,
+                                    tex_coord,
+                                    face_index,
+                                }
                             }));
                         }
                     };
                     let last = Chunk::SIZE - 1;
 
-                    add_face([0, 1, 2, 2, 3, 0], z == last || chunk.blocks[x][y][z + 1].transparent());
-                    add_face([4, 5, 6, 6, 7, 4], z == 0 || chunk.blocks[x][y][z - 1].transparent());
+                    add_face([0, 1, 2, 2, 3, 0], 4, z == last || chunk.blocks[x][y][z + 1].transparent());
+                    add_face([4, 5, 6, 6, 7, 4], 5, z == 0 || chunk.blocks[x][y][z - 1].transparent());
 
-                    add_face([8, 9, 10, 10, 11, 8], x == last || chunk.blocks[x + 1][y][z].transparent());
-                    add_face([12, 13, 14, 14, 15, 12], x == 0 || chunk.blocks[x - 1][y][z].transparent());
+                    add_face([8, 9, 10, 10, 11, 8], 0, x == last || chunk.blocks[x + 1][y][z].transparent());
+                    add_face([12, 13, 14, 14, 15, 12], 1, x == 0 || chunk.blocks[x - 1][y][z].transparent());
 
-                    add_face([16, 17, 18, 18, 19, 16], y == last || chunk.blocks[x][y + 1][z].transparent());
-                    add_face([20, 21, 22, 22, 23, 20], y == 0 || chunk.blocks[x][y - 1][z].transparent());
+                    add_face([16, 17, 18, 18, 19, 16], 2, y == last || chunk.blocks[x][y + 1][z].transparent());
+                    add_face([20, 21, 22, 22, 23, 20], 3, y == 0 || chunk.blocks[x][y - 1][z].transparent());
                 }
             }
         }
@@ -96,14 +100,11 @@ impl ChunkMesh {
     }
 }
 
-const fn vertex(pos: [i8; 3], tc: [i8; 2]) -> Vertex {
-    Vertex {
-        pos: [pos[0] as f32, pos[1] as f32, pos[2] as f32, 1.0],
-        tex_coord: [tc[0] as f32, tc[1] as f32],
-    }
+const fn vertex(pos: [i8; 3], tc: [i8; 2]) -> ([f32; 4], [f32; 2]) {
+    ([pos[0] as f32, pos[1] as f32, pos[2] as f32, 1.0], [tc[0] as f32, tc[1] as f32])
 }
 
-const VERTICES: [Vertex; 24] = [
+const VERTICES: [([f32; 4], [f32; 2]); 24] = [
     // POS_Z
     vertex([0, 0, 1], [0, 0]),
     vertex([1, 0, 1], [1, 0]),
