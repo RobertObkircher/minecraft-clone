@@ -1,7 +1,9 @@
+use std::time::Instant;
 use wgpu::{Buffer, BufferUsages, Device};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::chunk::{Block, Chunk};
+use crate::statistics::ChunkMeshInfo;
 use crate::Vertex;
 use crate::world::ChunkPosition;
 
@@ -12,7 +14,8 @@ pub struct ChunkMesh {
 }
 
 impl ChunkMesh {
-    pub fn new(device: &Device, position: ChunkPosition, chunk: &Chunk) -> ChunkMesh {
+    pub fn new(device: &Device, position: ChunkPosition, chunk: &Chunk) -> (ChunkMesh, ChunkMeshInfo) {
+        let start = Instant::now();
         let mut vs = vec![];
         let mut is: Vec<u16> = vec![];
 
@@ -57,11 +60,14 @@ impl ChunkMesh {
             usage: BufferUsages::INDEX,
         });
 
-        Self {
+        (Self {
             vertex_buffer,
             index_buffer,
             index_count: is.len().try_into().unwrap(),
-        }
+        }, ChunkMeshInfo {
+            time: start.elapsed(),
+            face_count: is.len() / 6,
+        })
     }
 }
 

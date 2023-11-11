@@ -1,9 +1,12 @@
+use std::time::Instant;
+
 use glam::IVec3;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use crate::chunk::{Block, Chunk};
 use crate::noise::ImprovedNoise;
+use crate::statistics::ChunkInfo;
 use crate::world::ChunkPosition;
 
 #[derive(Copy, Clone, Debug)]
@@ -64,7 +67,8 @@ impl TerrainGenerator {
         result
     }
 
-    pub fn fill_chunk(&mut self, position: ChunkPosition) -> Option<Chunk> {
+    pub fn fill_chunk(&mut self, position: ChunkPosition) -> (Option<Chunk>, ChunkInfo) {
+        let start = Instant::now();
         let mut result = Chunk::default();
 
         let mut random = random(position, self.world_seed, Usage::FillChunk);
@@ -72,7 +76,7 @@ impl TerrainGenerator {
         let position = position.block().index();
 
         let noise = ImprovedNoise::new(&mut random);
-        let mut is_air = true;
+        let mut non_air_block_count = 0;
 
         for x in 0..Chunk::SIZE {
             for y in 0..Chunk::SIZE {
@@ -91,7 +95,7 @@ impl TerrainGenerator {
                     let density = base_density + noise * 0.0;
 
                     result.blocks[x][y][z] = if density > 0.0 {
-                        is_air = false;
+                        non_air_block_count += 1;
                         Block::Dirt
                     } else {
                         Block::Air
@@ -100,13 +104,19 @@ impl TerrainGenerator {
             }
         }
 
-        if is_air {
-            return None;
+        if non_air_block_count == 0 {
+            return (None, ChunkInfo {
+                non_air_block_count,
+                time: start.elapsed(),
+            });
         }
 
         result.clear_transparency();
         result.compute_transparency();
 
-        Some(result)
+        (Some(result), ChunkInfo {
+            non_air_block_count,
+            time: start.elapsed(),
+        })
     }
 }

@@ -1,7 +1,9 @@
+extern crate core;
+
+use std::{io, mem};
 use std::borrow::Cow;
 use std::f32::consts::{PI, TAU};
-use std::mem;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytemuck::{Pod, Zeroable};
 use glam::{IVec3, Mat4, Vec3};
@@ -17,6 +19,7 @@ use winit::window::{CursorGrabMode, Window, WindowBuilder};
 use crate::camera::Camera;
 use crate::chunk::Transparency;
 use crate::mesh::ChunkMesh;
+use crate::statistics::{FrameInfo, Statistics};
 use crate::terrain::{TerrainGenerator, WorldSeed};
 use crate::world::{ChunkPosition, World};
 
@@ -26,6 +29,7 @@ mod chunk;
 mod mesh;
 mod terrain;
 mod noise;
+mod statistics;
 
 fn main() {
     env_logger::init();
@@ -83,6 +87,8 @@ pub fn create_depth_texture(device: &Device, config: &SurfaceConfiguration) -> (
 
 
 async fn run(event_loop: EventLoop<()>, window: Window) {
+    let mut statistics = Statistics::new();
+
     let instance = Instance::default();
     let surface = unsafe { instance.create_surface(&window) }.unwrap();
 
@@ -248,6 +254,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         target.exit();
                     }
                     WindowEvent::RedrawRequested => {
+                        let start = Instant::now();
+
                         if let Some((x, z)) = world_gen_queue.pop() {
                             for y in -view_distance / 2..=view_distance / 2 {
                                 let y = -y;
@@ -259,8 +267,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                     }
                                 }
 
-                                if let Some(chunk) = terrain.fill_chunk(position) {
-                                    world.add_mesh(position, ChunkMesh::new(&device, position, &chunk));
+                                let (chunk, chunk_info) = terrain.fill_chunk(position);
+                                statistics.chunk_generated(chunk_info);
+                                if let Some(chunk) = chunk {
+                                    let (mesh, info) = ChunkMesh::new(&device, position, &chunk);
+                                    statistics.chunk_mesh_generated(info);
+                                    world.add_mesh(position, mesh);
                                     world.add_chunk(position, chunk);
                                 } else {
                                     world.add_air_chunk(position);
@@ -331,6 +343,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         frame.present();
 
                         window.request_redraw();
+
+                        statistics.end_frame(FrameInfo {
+                            player_position: camera.position,
+                            player_orientation: camera.computed_vectors().direction,
+                            frame_time: start.elapsed(),
+                            chunk_info_count: statistics.chunk_infos.len(),
+                            chunk_mesh_info_count: statistics.chunk_mesh_infos.len(),
+                        });
+
+                        statistics.print_last_frame(&mut io::stdout().lock()).unwrap();
                     }
                     WindowEvent::Focused(_) => {
                         // TODO winit bug? changing cursor grab mode here didn't work
