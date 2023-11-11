@@ -17,11 +17,11 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, Window, WindowBuilder};
 
 use crate::camera::Camera;
-use crate::chunk::Transparency;
+use crate::chunk::{Chunk, Transparency};
 use crate::mesh::ChunkMesh;
 use crate::statistics::{FrameInfo, Statistics};
 use crate::terrain::{TerrainGenerator, WorldSeed};
-use crate::world::{ChunkPosition, World};
+use crate::world::{BlockPosition, ChunkPosition, World};
 
 mod camera;
 mod world;
@@ -135,12 +135,38 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     min_binding_size: BufferSize::new(64),
                 },
                 count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 1,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: BufferSize::new(12),
+                },
+                count: None,
             }
         ],
     });
+    let chunk_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        label: None,
+        entries: &[
+            BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: BufferSize::new(12),
+                },
+                count: None,
+            }
+        ],
+    });
+
     let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
         label: None,
-        bind_group_layouts: &[&bind_group_layout],
+        bind_group_layouts: &[&bind_group_layout, &chunk_bind_group_layout],
         push_constant_ranges: &[],
     });
 
@@ -148,11 +174,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     camera.turn_right(-TAU / 3.0);
     camera.turn_up(-PI / 2.0 / 3.0);
 
-    let mx_total = generate_matrix(config.width as f32 / config.height as f32, &camera);
-    let mx_ref: &[f32; 16] = mx_total.as_ref();
-    let uniform_buf = device.create_buffer_init(&BufferInitDescriptor {
+    let projection_view_matrix_uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Uniform Buffer"),
-        contents: bytemuck::cast_slice(mx_ref),
+        contents: bytemuck::cast_slice(generate_matrix(config.width as f32 / config.height as f32, &camera).as_ref()),
+        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+    });
+    let mut player_chunk = ChunkPosition::from_chunk_index(IVec3::ZERO);
+    let player_chunk_uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        label: Some("Uniform Buffer"),
+        contents: bytemuck::cast_slice(player_chunk.block().index().as_ref()),
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
 
@@ -161,7 +191,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         entries: &[
             BindGroupEntry {
                 binding: 0,
-                resource: uniform_buf.as_entire_binding(),
+                resource: projection_view_matrix_uniform_buffer.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 1,
+                resource: player_chunk_uniform_buffer.as_entire_binding(),
             }
         ],
         label: None,
@@ -270,7 +304,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 let (chunk, chunk_info) = terrain.fill_chunk(position);
                                 statistics.chunk_generated(chunk_info);
                                 if let Some(chunk) = chunk {
-                                    let (mesh, info) = ChunkMesh::new(&device, position, &chunk);
+                                    let (mesh, info) = ChunkMesh::new(&device, position, &chunk, &chunk_bind_group_layout);
                                     statistics.chunk_mesh_generated(info);
                                     world.add_mesh(position, mesh);
                                     world.add_chunk(position, chunk);
@@ -291,9 +325,15 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 label: None,
                             });
 
-                        let mx_total = generate_matrix(config.width as f32 / config.height as f32, &camera);
-                        let mx_ref: &[f32; 16] = mx_total.as_ref();
-                        queue.write_buffer(&uniform_buf, 0, &bytemuck::cast_slice(mx_ref));
+                        let chunk_offset = BlockPosition::new(camera.position.floor().as_ivec3()).chunk().index();
+                        if chunk_offset != IVec3::ZERO {
+                            player_chunk = player_chunk.plus(chunk_offset);
+                            camera.position -= (chunk_offset * Chunk::SIZE as i32).as_vec3();
+                            queue.write_buffer(&player_chunk_uniform_buffer, 0, &bytemuck::cast_slice(player_chunk.block().index().as_ref()));
+                        }
+                        // must happen after the player chunk uniform update to avoid one invalid frame
+                        let projection_view_matrix = generate_matrix(config.width as f32 / config.height as f32, &camera);
+                        queue.write_buffer(&projection_view_matrix_uniform_buffer, 0, &bytemuck::cast_slice(projection_view_matrix.as_ref()));
 
                         {
                             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -333,6 +373,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 pass.push_debug_group(&format!("Blocks of chunk {position:?}"));
                                 pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint16);
                                 pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                pass.set_bind_group(1, &mesh.bind_group, &[]);
                                 pass.pop_debug_group();
                                 pass.insert_debug_marker(&format!("Drawing chunk {position:?}"));
                                 pass.draw_indexed(0..mesh.index_count as u32, 0, 0..1);
@@ -345,7 +386,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         window.request_redraw();
 
                         statistics.end_frame(FrameInfo {
-                            player_position: camera.position,
+                            player_position: player_chunk.block().index().as_vec3() + camera.position,
                             player_orientation: camera.computed_vectors().direction,
                             frame_time: start.elapsed(),
                             chunk_info_count: statistics.chunk_infos.len(),

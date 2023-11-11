@@ -61,6 +61,7 @@ impl ChunkPosition {
         return BlockPosition(self.0 * Chunk::SIZE as i32);
     }
 
+    pub fn index(self) -> IVec3 { return self.0; }
     #[must_use]
     pub fn plus(self, direction: IVec3) -> Self {
         self.block().plus(direction.wrapping_mul(IVec3::splat(Chunk::SIZE as i32))).chunk()
@@ -71,6 +72,9 @@ impl ChunkPosition {
 pub struct BlockPosition(IVec3);
 
 impl BlockPosition {
+    pub fn new(index: IVec3) -> Self {
+        Self(index)
+    }
     pub fn index(self) -> IVec3 {
         self.0
     }

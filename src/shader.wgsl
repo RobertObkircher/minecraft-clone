@@ -3,9 +3,10 @@ struct VertexOutput {
     @builtin(position) position: vec4<f32>,
 };
 
-@group(0)
-@binding(0)
-var<uniform> transform: mat4x4<f32>;
+@group(0) @binding(0) var<uniform> transform: mat4x4<f32>;
+@group(0) @binding(1) var<uniform> player_chunk: vec3<i32>;
+
+@group(1) @binding(0) var<uniform> chunk_position: vec3<i32>;
 
 @vertex
 fn vs_main(
@@ -14,7 +15,11 @@ fn vs_main(
 ) -> VertexOutput {
     var result: VertexOutput;
     result.tex_coord = tex_coord;
-    result.position = transform * position;
+
+    // this allows vertices to be relative to their chunk to avoid precision issues for large coordinates
+    var offset = vec4<i32>(chunk_position - player_chunk, 0);
+
+    result.position = transform * (position + vec4<f32>(offset));
     return result;
 }
 
