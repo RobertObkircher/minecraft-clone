@@ -8,6 +8,8 @@ pub struct Statistics {
     pub frame_infos: Vec<FrameInfo>,
     pub chunk_infos: Vec<ChunkInfo>,
     pub chunk_mesh_infos: Vec<ChunkMeshInfo>,
+    pub total_chunk_time: Duration,
+    pub total_chunk_mesh_time: Duration,
 }
 
 pub struct FrameInfo {
@@ -34,14 +36,18 @@ impl Statistics {
             frame_infos: vec![],
             chunk_infos: vec![],
             chunk_mesh_infos: vec![],
+            total_chunk_time: Duration::ZERO,
+            total_chunk_mesh_time: Duration::ZERO,
         }
     }
 
     pub fn chunk_generated(&mut self, info: ChunkInfo) {
+        self.total_chunk_time += info.time;
         self.chunk_infos.push(info);
     }
 
     pub fn chunk_mesh_generated(&mut self, info: ChunkMeshInfo) {
+        self.total_chunk_mesh_time += info.time;
         self.chunk_mesh_infos.push(info);
     }
 
@@ -57,9 +63,11 @@ impl Statistics {
         writeln!(w, "Frame: {}", self.frame_infos.len())?;
 
         let last_10: Duration = self.frame_infos.iter().rev().take(10).map(|it| it.frame_time).sum();
-        writeln!(w, "Frame time: {:3}ms = {:6.2}fps current, {:4}ms = {:6.2}fps last 10 ",
+        writeln!(w, "    current: {:4}ms = {:6.2}f/s",
                  frame.frame_time.as_millis(),
                  1.0 / frame.frame_time.as_secs_f64(),
+        )?;
+        writeln!(w, "    last 10: {:4}ms = {:6.2}f/s",
                  last_10.as_millis(),
                  10.0 / last_10.as_secs_f64(),
         )?;
@@ -70,28 +78,44 @@ impl Statistics {
 
         let (prev_cic, prev_cmic) = self.frame_infos.iter().nth_back(1).map(|it| (it.chunk_info_count, it.chunk_mesh_info_count)).unwrap_or((0, 0));
 
-        let chunk_infos = &self.chunk_infos[prev_cic..frame.chunk_info_count];
-        let chunk_infos_duration: f64 = chunk_infos.iter().map(|it| it.time.as_secs_f64()).sum();
-        if chunk_infos.is_empty() {
-            writeln!(w, "Chunks: 0 generated")?;
-        } else {
-            writeln!(w, "Chunks: {:4} generated, {:6.2}ms total, {:6.2}ms average",
-                     chunk_infos.len(),
-                     1000.0 * chunk_infos_duration,
-                     1000.0 * chunk_infos_duration / chunk_infos.len() as f64,
+        writeln!(w, "Chunks:")?;
+        {
+            writeln!(w, "    total: {:4} generated, {:6.2}ms total, {:6.2}ms average",
+                     self.chunk_infos.len(),
+                     1000.0 * self.total_chunk_time.as_secs_f64(),
+                     1000.0 * self.total_chunk_time.as_secs_f64() / self.chunk_infos.len() as f64,
             )?;
+            let chunk_infos = &self.chunk_infos[prev_cic..frame.chunk_info_count];
+            let chunk_infos_duration: f64 = chunk_infos.iter().map(|it| it.time.as_secs_f64()).sum();
+            if chunk_infos.is_empty() {
+                writeln!(w, "    frame: 0 generated")?;
+            } else {
+                writeln!(w, "    frame: {:4} generated, {:6.2}ms total, {:6.2}ms average",
+                         chunk_infos.len(),
+                         1000.0 * chunk_infos_duration,
+                         1000.0 * chunk_infos_duration / chunk_infos.len() as f64,
+                )?;
+            }
         }
 
-        let chunk_mesh_infos = &self.chunk_mesh_infos[prev_cmic..frame.chunk_mesh_info_count];
-        let chunk_mesh_infos_duration: f64 = chunk_mesh_infos.iter().map(|it| it.time.as_secs_f64()).sum();
-        if chunk_mesh_infos.is_empty() {
-            writeln!(w, "Chunk meshes: 0 generated")?;
-        } else {
-            writeln!(w, "Chunk meshes: {:4} generated, {:6.2}ms total, {:6.2}ms average",
-                     chunk_mesh_infos.len(),
-                     1000.0 * chunk_mesh_infos_duration,
-                     1000.0 * chunk_mesh_infos_duration / chunk_mesh_infos.len() as f64,
+        writeln!(w, "Chunk meshes:")?;
+        {
+            writeln!(w, "    total: {:4} generated, {:6.2}ms total, {:6.2}ms average",
+                     self.chunk_mesh_infos.len(),
+                     1000.0 * self.total_chunk_mesh_time.as_secs_f64(),
+                     1000.0 * self.total_chunk_mesh_time.as_secs_f64() / self.chunk_mesh_infos.len() as f64,
             )?;
+            let chunk_mesh_infos = &self.chunk_mesh_infos[prev_cmic..frame.chunk_mesh_info_count];
+            let chunk_mesh_infos_duration: f64 = chunk_mesh_infos.iter().map(|it| it.time.as_secs_f64()).sum();
+            if chunk_mesh_infos.is_empty() {
+                writeln!(w, "    frame: 0 generated")?;
+            } else {
+                writeln!(w, "    frame: {:4} generated, {:6.2}ms total, {:6.2}ms average",
+                         chunk_mesh_infos.len(),
+                         1000.0 * chunk_mesh_infos_duration,
+                         1000.0 * chunk_mesh_infos_duration / chunk_mesh_infos.len() as f64,
+                )?;
+            }
         }
 
         let size = mem::size_of::<Statistics>() +
