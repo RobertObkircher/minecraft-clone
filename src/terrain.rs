@@ -6,8 +6,8 @@ use rand::SeedableRng;
 
 use crate::chunk::{Block, Chunk};
 use crate::noise::ImprovedNoise;
-use crate::statistics::ChunkInfo;
 use crate::position::ChunkPosition;
+use crate::statistics::ChunkInfo;
 
 #[derive(Copy, Clone, Debug)]
 pub struct WorldSeed(pub usize);
@@ -35,7 +35,6 @@ fn random(position: ChunkPosition, world_seed: WorldSeed, usage: Usage) -> StdRn
     StdRng::from_seed(seed)
 }
 
-
 pub struct TerrainGenerator {
     world_seed: WorldSeed,
     global_noise: ImprovedNoise,
@@ -43,7 +42,11 @@ pub struct TerrainGenerator {
 
 impl TerrainGenerator {
     pub fn new(world_seed: WorldSeed) -> Self {
-        let mut random = random(ChunkPosition::from_chunk_index(IVec3::ZERO), world_seed, Usage::FillWorld);
+        let mut random = random(
+            ChunkPosition::from_chunk_index(IVec3::ZERO),
+            world_seed,
+            Usage::FillWorld,
+        );
         let global_noise = ImprovedNoise::new(&mut random);
         Self {
             world_seed,
@@ -90,7 +93,11 @@ impl TerrainGenerator {
                     let delta_h = global_height - block_y as f64;
                     let base_density = delta_h / 127.0;
 
-                    let noise = noise.noise(block_x as f64 * 0.1, block_y as f64 * 0.1, block_z as f64 * 0.1);
+                    let noise = noise.noise(
+                        block_x as f64 * 0.1,
+                        block_y as f64 * 0.1,
+                        block_z as f64 * 0.1,
+                    );
 
                     let density = base_density + noise * 0.0;
 
@@ -105,19 +112,25 @@ impl TerrainGenerator {
         }
 
         if non_air_block_count == 0 {
-            return (None, ChunkInfo {
-                non_air_block_count,
-                time: start.elapsed(),
-            });
+            return (
+                None,
+                ChunkInfo {
+                    non_air_block_count,
+                    time: start.elapsed(),
+                },
+            );
         }
 
         result.clear_transparency();
         result.compute_transparency();
         result.non_air_block_count = non_air_block_count;
 
-        (Some(result), ChunkInfo {
-            non_air_block_count,
-            time: start.elapsed(),
-        })
+        (
+            Some(result),
+            ChunkInfo {
+                non_air_block_count,
+                time: start.elapsed(),
+            },
+        )
     }
 }

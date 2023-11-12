@@ -1,4 +1,8 @@
-use wgpu::{Device, Extent3d, ImageCopyTexture, ImageDataLayout, Origin3d, Queue, Sampler, SamplerDescriptor, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView};
+use wgpu::{
+    Device, Extent3d, ImageCopyTexture, ImageDataLayout, Origin3d, Queue, Sampler,
+    SamplerDescriptor, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureUsages, TextureView,
+};
 
 pub struct BlockTexture {
     pub texture: Texture,

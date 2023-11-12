@@ -34,7 +34,8 @@ impl Camera {
             x: self.ccw_y_rot_radians.cos() * self.up_down_radians.cos(),
             y: self.up_down_radians.sin(),
             z: -self.ccw_y_rot_radians.sin() * self.up_down_radians.cos(),
-        }.normalize();
+        }
+        .normalize();
         let world_up = Vec3::Y;
         let right = direction.cross(world_up).normalize();
         let up = right.cross(direction).normalize();
@@ -56,6 +57,8 @@ impl Camera {
     }
 
     pub fn turn_up(&mut self, radians: f32) {
-        self.up_down_radians = (self.up_down_radians + radians).max(-Self::MAX_UP_DOWN).min(Self::MAX_UP_DOWN)
+        self.up_down_radians = (self.up_down_radians + radians)
+            .max(-Self::MAX_UP_DOWN)
+            .min(Self::MAX_UP_DOWN)
     }
 }

@@ -8,8 +8,19 @@ use std::time::{Duration, Instant};
 use glam::{IVec3, Mat4, Vec3};
 use log::info;
 use pollster;
-use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BufferBindingType, BufferSize, BufferUsages, Color, CommandEncoderDescriptor, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, Face, Features, FragmentState, IndexFormat, Instance, Limits, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, VertexState};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
+use wgpu::{
+    BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
+    BindingResource, BindingType, BufferBindingType, BufferSize, BufferUsages, Color,
+    CommandEncoderDescriptor, CompareFunction, DepthStencilState, Device, DeviceDescriptor,
+    Extent3d, Face, Features, FragmentState, IndexFormat, Instance, Limits, LoadOp,
+    MultisampleState, Operations, PipelineLayoutDescriptor, PowerPreference, PresentMode,
+    PrimitiveState, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
+    RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType,
+    ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, SurfaceConfiguration, Texture,
+    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+    TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
+};
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{Key, NamedKey};
@@ -25,14 +36,14 @@ use crate::texture::BlockTexture;
 use crate::world::World;
 
 mod camera;
-mod world;
 mod chunk;
 mod mesh;
-mod terrain;
 mod noise;
-mod statistics;
-mod texture;
 mod position;
+mod statistics;
+mod terrain;
+mod texture;
+mod world;
 
 fn main() {
     env_logger::init();
@@ -49,7 +60,6 @@ fn main() {
     pollster::block_on(run(event_loop, window));
 }
 
-
 fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
     let fov_y_radians = PI / 4.0;
     let projection = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 1000.0);
@@ -62,7 +72,10 @@ fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
 
 const DEPTH_TEXTURE_FORMAT: TextureFormat = TextureFormat::Depth32Float;
 
-pub fn create_depth_texture(device: &Device, config: &SurfaceConfiguration) -> (Texture, TextureView) {
+pub fn create_depth_texture(
+    device: &Device,
+    config: &SurfaceConfiguration,
+) -> (Texture, TextureView) {
     let texture = device.create_texture(&TextureDescriptor {
         label: Some("depth"),
         size: Extent3d {
@@ -82,29 +95,39 @@ pub fn create_depth_texture(device: &Device, config: &SurfaceConfiguration) -> (
     (texture, depth_view)
 }
 
-
 async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut statistics = Statistics::new();
 
     let instance = Instance::default();
     let surface = unsafe { instance.create_surface(&window) }.unwrap();
 
-    let adapter = instance.request_adapter(&RequestAdapterOptions {
-        power_preference: PowerPreference::default(),
-        force_fallback_adapter: false,
-        compatible_surface: Some(&surface),
-    }).await.expect("Failed to find an appropriate adapter");
+    let adapter = instance
+        .request_adapter(&RequestAdapterOptions {
+            power_preference: PowerPreference::default(),
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+        })
+        .await
+        .expect("Failed to find an appropriate adapter");
 
-    let (device, queue) = adapter.request_device(&DeviceDescriptor {
-        label: None,
-        features: Features::empty(),
-        // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-        limits: Limits::downlevel_webgl2_defaults()
-            .using_resolution(adapter.limits()),
-    }, None).await.expect("Failed to create device");
+    let (device, queue) = adapter
+        .request_device(
+            &DeviceDescriptor {
+                label: None,
+                features: Features::empty(),
+                // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
+                limits: Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+            },
+            None,
+        )
+        .await
+        .expect("Failed to create device");
 
     let swapchain_capabilities = surface.get_capabilities(&adapter);
-    let swapchain_format = swapchain_capabilities.formats.iter().copied()
+    let swapchain_format = swapchain_capabilities
+        .formats
+        .iter()
+        .copied()
         .find(|it| it.is_srgb())
         .expect("Expected srgb surface");
 
@@ -159,10 +182,11 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                 visibility: ShaderStages::FRAGMENT,
                 ty: BindingType::Sampler(SamplerBindingType::NonFiltering), // TODO filtering?
                 count: None,
-            }
+            },
         ],
     });
-    let chunk_bind_group_layout = device.create_bind_group_layout(&ChunkMesh::BIND_GROUP_LAYOUT_DESCRIPTOR);
+    let chunk_bind_group_layout =
+        device.create_bind_group_layout(&ChunkMesh::BIND_GROUP_LAYOUT_DESCRIPTOR);
 
     let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
         label: None,
@@ -176,7 +200,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let projection_view_matrix_uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Uniform Buffer"),
-        contents: bytemuck::cast_slice(generate_matrix(config.width as f32 / config.height as f32, &camera).as_ref()),
+        contents: bytemuck::cast_slice(
+            generate_matrix(config.width as f32 / config.height as f32, &camera).as_ref(),
+        ),
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
     let mut player_chunk = ChunkPosition::from_chunk_index(IVec3::ZERO);
@@ -186,7 +212,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
 
-    let blocks = BlockTexture::from_bitmap_bytes(&device, &queue, include_bytes!("blocks.bmp"), "blocks.bmp");
+    let blocks = BlockTexture::from_bitmap_bytes(
+        &device,
+        &queue,
+        include_bytes!("blocks.bmp"),
+        "blocks.bmp",
+    );
 
     let bind_group = device.create_bind_group(&BindGroupDescriptor {
         layout: &bind_group_layout,
@@ -206,11 +237,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             BindGroupEntry {
                 binding: 3,
                 resource: BindingResource::Sampler(&blocks.sampler),
-            }
+            },
         ],
         label: None,
     });
-
 
     let shader = device.create_shader_module(ShaderModuleDescriptor {
         label: None,

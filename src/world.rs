@@ -62,7 +62,9 @@ impl World {
                 }
 
                 if let Some(above) = self.get_chunk(position.plus(IVec3::Y)) {
-                    if above.get_transparency(Transparency::Computed) && !above.get_transparency(Transparency::NegY) {
+                    if above.get_transparency(Transparency::Computed)
+                        && !above.get_transparency(Transparency::NegY)
+                    {
                         self.generation_queue.push_back((x, z));
                         break;
                     }
@@ -71,21 +73,33 @@ impl World {
         }
     }
 
-    pub fn generate_meshes(&mut self, device: &Device, chunk_bind_group_layout: &BindGroupLayout, statistics: &mut Statistics) {
+    pub fn generate_meshes(
+        &mut self,
+        device: &Device,
+        chunk_bind_group_layout: &BindGroupLayout,
+        statistics: &mut Statistics,
+    ) {
         while let Some(position) = self.mesh_queue.pop_front() {
             let chunk = self.get_chunk(position).unwrap();
             let neighbours = self.neighbours(position).unwrap();
-            if chunk.non_air_block_count == Chunk::MAX_BLOCK_COUNT &&
-                !neighbours.pos_x.get_transparency(Transparency::NegX) &&
-                !neighbours.neg_x.get_transparency(Transparency::PosX) &&
-                !neighbours.pos_y.get_transparency(Transparency::NegY) &&
-                !neighbours.neg_y.get_transparency(Transparency::PosY) &&
-                !neighbours.pos_z.get_transparency(Transparency::NegZ) &&
-                !neighbours.neg_z.get_transparency(Transparency::PosZ) {
+            if chunk.non_air_block_count == Chunk::MAX_BLOCK_COUNT
+                && !neighbours.pos_x.get_transparency(Transparency::NegX)
+                && !neighbours.neg_x.get_transparency(Transparency::PosX)
+                && !neighbours.pos_y.get_transparency(Transparency::NegY)
+                && !neighbours.neg_y.get_transparency(Transparency::PosY)
+                && !neighbours.pos_z.get_transparency(Transparency::NegZ)
+                && !neighbours.neg_z.get_transparency(Transparency::PosZ)
+            {
                 statistics.full_invisible_chunks += 1;
                 continue;
             }
-            let (mesh, info) = ChunkMesh::generate(&device, position, &chunk, neighbours, &chunk_bind_group_layout);
+            let (mesh, info) = ChunkMesh::generate(
+                &device,
+                position,
+                &chunk,
+                neighbours,
+                &chunk_bind_group_layout,
+            );
             statistics.chunk_mesh_generated(info);
             self.add_mesh(position, mesh);
         }
@@ -109,16 +123,20 @@ impl World {
         self.position_to_mesh.insert(position, mesh);
     }
 
-    pub fn iter_chunk_meshes(&self) -> impl Iterator<Item=(&ChunkPosition, &ChunkMesh)> {
+    pub fn iter_chunk_meshes(&self) -> impl Iterator<Item = (&ChunkPosition, &ChunkMesh)> {
         self.position_to_mesh.iter()
     }
 
     pub fn get_chunk(&self, position: ChunkPosition) -> Option<&Chunk> {
-        self.position_to_index.get(&position).map(|it| &self.chunks[it.0 as usize])
+        self.position_to_index
+            .get(&position)
+            .map(|it| &self.chunks[it.0 as usize])
     }
 
     pub fn get_chunk_mut(&mut self, position: ChunkPosition) -> Option<&mut Chunk> {
-        self.position_to_index.get(&position).map(|it| &mut self.chunks[it.0 as usize])
+        self.position_to_index
+            .get(&position)
+            .map(|it| &mut self.chunks[it.0 as usize])
     }
 
     pub fn neighbours(&self, position: ChunkPosition) -> Option<ChunkNeighbours> {
@@ -142,7 +160,11 @@ impl World {
     }
 
     fn update_mesh(&mut self, position: ChunkPosition) {
-        if self.get_chunk(position).map(|it| it.has_valid_mesh).unwrap_or(false) {
+        if self
+            .get_chunk(position)
+            .map(|it| it.has_valid_mesh)
+            .unwrap_or(false)
+        {
             return;
         }
         let neighbours = self.neighbours(position);

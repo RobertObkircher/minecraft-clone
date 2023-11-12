@@ -12,11 +12,12 @@ pub struct ImprovedNoise {
 impl ImprovedNoise {
     pub fn new(random: &mut StdRng) -> Self {
         let mut permutation = [0u8; 256];
-        permutation.iter_mut().enumerate().for_each(|(i, v)| *v = i as u8);
+        permutation
+            .iter_mut()
+            .enumerate()
+            .for_each(|(i, v)| *v = i as u8);
         permutation.shuffle(random);
-        Self {
-            permutation
-        }
+        Self { permutation }
     }
 
     #[allow(non_snake_case)]
@@ -46,23 +47,30 @@ impl ImprovedNoise {
         let BB = p(B + Wrapping(1)) + Z;
 
         // AND ADD BLENDED RESULTS FROM 8 CORNERS OF CUBE
-        lerp(w,
-             lerp(v,
-                  lerp(u, grad(p(AA), x, y, z),
-                       grad(p(BA), x - 1.0, y, z),
-                  ),
-                  lerp(u, grad(p(AB), x, y - 1.0, z),
-                       grad(p(BB), x - 1.0, y - 1.0, z),
-                  ),
-             ),
-             lerp(v,
-                  lerp(u, grad(p(AA + Wrapping(1)), x, y, z - 1.0),
-                       grad(p(BA + Wrapping(1)), x - 1.0, y, z - 1.0),
-                  ),
-                  lerp(u, grad(p(AB + Wrapping(1)), x, y - 1.0, z - 1.0),
-                       grad(p(BB + Wrapping(1)), x - 1.0, y - 1.0, z - 1.0),
-                  ),
-             ),
+        lerp(
+            w,
+            lerp(
+                v,
+                lerp(u, grad(p(AA), x, y, z), grad(p(BA), x - 1.0, y, z)),
+                lerp(
+                    u,
+                    grad(p(AB), x, y - 1.0, z),
+                    grad(p(BB), x - 1.0, y - 1.0, z),
+                ),
+            ),
+            lerp(
+                v,
+                lerp(
+                    u,
+                    grad(p(AA + Wrapping(1)), x, y, z - 1.0),
+                    grad(p(BA + Wrapping(1)), x - 1.0, y, z - 1.0),
+                ),
+                lerp(
+                    u,
+                    grad(p(AB + Wrapping(1)), x, y - 1.0, z - 1.0),
+                    grad(p(BB + Wrapping(1)), x - 1.0, y - 1.0, z - 1.0),
+                ),
+            ),
         )
     }
 
@@ -82,15 +90,14 @@ impl ImprovedNoise {
         let A = p(X) + Y;
         let B = p(X + Wrapping(1)) + Y;
 
-        lerp(v,
-             lerp(u,
-                  grad_2(p(A), x, y),
-                  grad_2(p(B), x - 1.0, y),
-             ),
-             lerp(u,
-                  grad_2(p(A + Wrapping(1)), x, y - 1.0),
-                  grad_2(p(B + Wrapping(1)), x - 1.0, y - 1.0),
-             ),
+        lerp(
+            v,
+            lerp(u, grad_2(p(A), x, y), grad_2(p(B), x - 1.0, y)),
+            lerp(
+                u,
+                grad_2(p(A + Wrapping(1)), x, y - 1.0),
+                grad_2(p(B + Wrapping(1)), x - 1.0, y - 1.0),
+            ),
         )
     }
 }
@@ -107,7 +114,13 @@ fn lerp(t: f64, a: f64, b: f64) -> f64 {
 fn grad(hash: Wrapping<u8>, x: f64, y: f64, z: f64) -> f64 {
     let h = hash.0 & 15;
     let u = if h < 8 { x } else { y };
-    let v = if h < 4 { y } else if h == 12 || h == 14 { x } else { z };
+    let v = if h < 4 {
+        y
+    } else if h == 12 || h == 14 {
+        x
+    } else {
+        z
+    };
     return if (h & 1) == 0 { u } else { -u } + if (h & 2) == 0 { v } else { -v };
 }
 
@@ -117,6 +130,6 @@ fn grad_2(hash: Wrapping<u8>, x: f64, y: f64) -> f64 {
         0b01 => -1.0 * x + 1.0 * y,
         0b10 => 1.0 * x + -1.0 * y,
         0b11 => -1.0 * x + -1.0 * y,
-        _ => unreachable!()
+        _ => unreachable!(),
     }
 }

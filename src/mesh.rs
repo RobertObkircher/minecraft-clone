@@ -2,8 +2,13 @@ use std::mem;
 use std::time::Instant;
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferAddress, BufferBindingType, BufferSize, BufferUsages, Device, ShaderStages, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
+use wgpu::{
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BindingType, Buffer, BufferAddress, BufferBindingType, BufferSize,
+    BufferUsages, Device, ShaderStages, VertexAttribute, VertexBufferLayout, VertexFormat,
+    VertexStepMode,
+};
 
 use crate::chunk::{Block, Chunk, Transparency};
 use crate::position::ChunkPosition;
@@ -180,10 +185,10 @@ impl ChunkMesh {
         ],
     };
 
-    pub const BIND_GROUP_LAYOUT_DESCRIPTOR: BindGroupLayoutDescriptor<'static> = BindGroupLayoutDescriptor {
-        label: None,
-        entries: &[
-            BindGroupLayoutEntry {
+    pub const BIND_GROUP_LAYOUT_DESCRIPTOR: BindGroupLayoutDescriptor<'static> =
+        BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[BindGroupLayoutEntry {
                 binding: 0,
                 visibility: ShaderStages::VERTEX,
                 ty: BindingType::Buffer {
@@ -192,13 +197,15 @@ impl ChunkMesh {
                     min_binding_size: BufferSize::new(12),
                 },
                 count: None,
-            }
-        ],
-    };
+            }],
+        };
 }
 
 const fn vertex(pos: [i8; 3], tc: [i8; 2]) -> ([f32; 4], [f32; 2]) {
-    ([pos[0] as f32, pos[1] as f32, pos[2] as f32, 1.0], [tc[0] as f32, tc[1] as f32])
+    (
+        [pos[0] as f32, pos[1] as f32, pos[2] as f32, 1.0],
+        [tc[0] as f32, tc[1] as f32],
+    )
 }
 
 const VERTICES: [([f32; 4], [f32; 2]); 24] = [

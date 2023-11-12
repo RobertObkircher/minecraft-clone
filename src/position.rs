@@ -1,4 +1,5 @@
 use glam::IVec3;
+
 use crate::chunk::Chunk;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -13,10 +14,14 @@ impl ChunkPosition {
         return BlockPosition(self.0 * Chunk::SIZE as i32);
     }
 
-    pub fn index(self) -> IVec3 { return self.0; }
+    pub fn index(self) -> IVec3 {
+        return self.0;
+    }
     #[must_use]
     pub fn plus(self, direction: IVec3) -> Self {
-        self.block().plus(direction.wrapping_mul(IVec3::splat(Chunk::SIZE as i32))).chunk()
+        self.block()
+            .plus(direction.wrapping_mul(IVec3::splat(Chunk::SIZE as i32)))
+            .chunk()
     }
 }
 
