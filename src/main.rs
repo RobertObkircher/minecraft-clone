@@ -247,17 +247,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let delta_time = Duration::from_millis(16).as_secs_f32();
 
-    let mut world = World::new();
+    let mut world = World::new(12);
     let mut terrain = TerrainGenerator::new(WorldSeed(42));
-
-    let mut world_gen_queue = Vec::<(i32, i32)>::new();
-    let view_distance = 12;
-    for x in -view_distance..=view_distance {
-        for z in -view_distance..=view_distance {
-            world_gen_queue.push((x, z));
-        }
-    }
-    world_gen_queue.sort_by_key(|(x, z)| -(x * x + z * z));
 
     let mut start = Instant::now();
 
@@ -282,26 +273,31 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     WindowEvent::RedrawRequested => {
                         window.request_redraw();
 
-                        if let Some((x, z)) = world_gen_queue.pop() {
-                            for y in -view_distance / 2..=view_distance / 2 {
-                                let y = -y;
+                        if let Some((x, z)) = world.generation_queue.pop_front() {
+                            let height = 16;
+                            for y in (0..height).into_iter().map(|it| it - height / 2).rev() {
                                 let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
-
-                                if let Some(above) = world.get_chunk(position.plus(IVec3::Y)) {
-                                    if above.get_transparency(Transparency::Computed) && !above.get_transparency(Transparency::NegY) {
-                                        break;
-                                    }
-                                }
 
                                 let (chunk, chunk_info) = terrain.fill_chunk(position);
                                 statistics.chunk_generated(chunk_info);
                                 if let Some(chunk) = chunk {
-                                    let (mesh, info) = ChunkMesh::new(&device, position, &chunk, &chunk_bind_group_layout);
-                                    statistics.chunk_mesh_generated(info);
-                                    world.add_mesh(position, mesh);
                                     world.add_chunk(position, chunk);
                                 } else {
                                     world.add_air_chunk(position);
+                                }
+
+                                while let Some(position) = world.mesh_queue.pop_front() {
+                                    let chunk = world.get_chunk(position).unwrap();
+                                    let (mesh, info) = ChunkMesh::new(&device, position, &chunk, &chunk_bind_group_layout);
+                                    statistics.chunk_mesh_generated(info);
+                                    world.add_mesh(position, mesh);
+                                }
+
+                                if let Some(above) = world.get_chunk(position.plus(IVec3::Y)) {
+                                    if above.get_transparency(Transparency::Computed) && !above.get_transparency(Transparency::NegY) {
+                                        world.generation_queue.push_back((x, z));
+                                        break;
+                                    }
                                 }
                             }
                         }

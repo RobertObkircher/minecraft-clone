@@ -1,6 +1,7 @@
 pub struct Chunk {
     pub blocks: [[[Block; Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE],
     pub transparency: u8,
+    pub has_valid_mesh: bool,
 }
 
 pub enum Transparency {
@@ -58,6 +59,7 @@ impl Default for Chunk {
         Self {
             blocks: Default::default(),
             transparency: 0,
+            has_valid_mesh: false,
         }
     }
 }
