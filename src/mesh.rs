@@ -1,11 +1,12 @@
+use std::mem;
 use std::time::Instant;
 
-use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, Buffer, BufferUsages, Device};
+use bytemuck::{Pod, Zeroable};
+use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, Buffer, BufferAddress, BufferUsages, Device, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::chunk::{Block, Chunk};
 use crate::statistics::ChunkMeshInfo;
-use crate::Vertex;
 use crate::world::ChunkPosition;
 
 pub struct ChunkMesh {
@@ -14,6 +15,14 @@ pub struct ChunkMesh {
     pub uniform_buffer: Buffer,
     pub bind_group: BindGroup,
     pub index_count: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct Vertex {
+    pos: [f32; 4],
+    tex_coord: [f32; 2],
+    face_index: u32,
 }
 
 impl ChunkMesh {
@@ -104,6 +113,30 @@ impl ChunkMesh {
             time: start.elapsed(),
             face_count: indices.len() / 6,
         })
+    }
+
+    pub fn vertex_buffer_layout() -> VertexBufferLayout<'static> {
+        VertexBufferLayout {
+            array_stride: mem::size_of::<Vertex>() as BufferAddress,
+            step_mode: VertexStepMode::Vertex,
+            attributes: &[
+                VertexAttribute {
+                    format: VertexFormat::Float32x4,
+                    offset: 0,
+                    shader_location: 0,
+                },
+                VertexAttribute {
+                    format: VertexFormat::Float32x2,
+                    offset: 4 * 4,
+                    shader_location: 1,
+                },
+                VertexAttribute {
+                    format: VertexFormat::Uint32,
+                    offset: 4 * 4 + 2 * 4,
+                    shader_location: 2,
+                },
+            ],
+        }
     }
 }
 

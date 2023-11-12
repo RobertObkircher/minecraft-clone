@@ -48,13 +48,6 @@ fn main() {
     pollster::block_on(run(event_loop, window));
 }
 
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-struct Vertex {
-    pos: [f32; 4],
-    tex_coord: [f32; 2],
-    face_index: u32,
-}
 
 fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
     let fov_y_radians = PI / 4.0;
@@ -126,8 +119,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     };
 
     surface.configure(&device, &config);
-
-    let vertex_size = mem::size_of::<Vertex>();
 
     let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
         label: None,
@@ -239,28 +230,6 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
     });
 
-    let vertex_buffers = [VertexBufferLayout {
-        array_stride: vertex_size as BufferAddress,
-        step_mode: VertexStepMode::Vertex,
-        attributes: &[
-            VertexAttribute {
-                format: VertexFormat::Float32x4,
-                offset: 0,
-                shader_location: 0,
-            },
-            VertexAttribute {
-                format: VertexFormat::Float32x2,
-                offset: 4 * 4,
-                shader_location: 1,
-            },
-            VertexAttribute {
-                format: VertexFormat::Uint32,
-                offset: 4 * 4 + 2 * 4,
-                shader_location: 2,
-            },
-        ],
-    }];
-
     let mut depth = create_depth_texture(&device, &config);
 
     let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
@@ -269,7 +238,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         vertex: VertexState {
             module: &shader,
             entry_point: "vs_main",
-            buffers: &vertex_buffers,
+            buffers: &[ChunkMesh::vertex_buffer_layout()],
         },
         fragment: Some(FragmentState {
             module: &shader,
