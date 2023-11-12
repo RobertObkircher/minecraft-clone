@@ -6,8 +6,9 @@ use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, Bind
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::chunk::{Block, Chunk};
+use crate::position::ChunkPosition;
 use crate::statistics::ChunkMeshInfo;
-use crate::world::{ChunkNeighbours, ChunkPosition};
+use crate::world::ChunkNeighbours;
 
 pub struct ChunkMesh {
     pub vertex_buffer: Buffer,

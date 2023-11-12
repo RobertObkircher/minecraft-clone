@@ -7,7 +7,7 @@ use rand::SeedableRng;
 use crate::chunk::{Block, Chunk};
 use crate::noise::ImprovedNoise;
 use crate::statistics::ChunkInfo;
-use crate::world::ChunkPosition;
+use crate::position::ChunkPosition;
 
 #[derive(Copy, Clone, Debug)]
 pub struct WorldSeed(pub usize);

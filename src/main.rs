@@ -18,10 +18,11 @@ use winit::window::{CursorGrabMode, Window, WindowBuilder};
 use crate::camera::Camera;
 use crate::chunk::{Chunk, Transparency};
 use crate::mesh::ChunkMesh;
+use crate::position::{BlockPosition, ChunkPosition};
 use crate::statistics::{FrameInfo, Statistics};
 use crate::terrain::{TerrainGenerator, WorldSeed};
 use crate::texture::BlockTexture;
-use crate::world::{BlockPosition, ChunkPosition, World};
+use crate::world::World;
 
 mod camera;
 mod world;
@@ -31,6 +32,7 @@ mod terrain;
 mod noise;
 mod statistics;
 mod texture;
+mod position;
 
 fn main() {
     env_logger::init();
@@ -279,7 +281,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
 
                                 if world.get_chunk_mut(position).is_some() {
-                                    continue
+                                    continue;
                                 }
 
                                 let (chunk, chunk_info) = terrain.fill_chunk(position);
