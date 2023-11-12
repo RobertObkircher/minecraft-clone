@@ -1,10 +1,13 @@
 use std::collections::{HashMap, VecDeque};
 
 use glam::IVec3;
+use wgpu::{BindGroupLayout, Device};
 
-use crate::chunk::Chunk;
+use crate::chunk::{Chunk, Transparency};
 use crate::mesh::ChunkMesh;
 use crate::position::ChunkPosition;
+use crate::statistics::Statistics;
+use crate::terrain::TerrainGenerator;
 
 pub struct World {
     chunks: Vec<Chunk>,
@@ -38,6 +41,55 @@ impl World {
             mesh_queue: VecDeque::new(),
         }
     }
+
+    pub fn generate_chunks(&mut self, terrain: &mut TerrainGenerator, statistics: &mut Statistics) {
+        if let Some((x, z)) = self.generation_queue.pop_front() {
+            let height = 16;
+            for y in (0..height).into_iter().map(|it| it - height / 2).rev() {
+                let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
+
+                if self.get_chunk_mut(position).is_some() {
+                    continue;
+                }
+
+                let (chunk, chunk_info) = terrain.fill_chunk(position);
+                statistics.chunk_generated(chunk_info);
+                if let Some(chunk) = chunk {
+                    self.add_chunk(position, chunk);
+                } else {
+                    self.add_air_chunk(position);
+                }
+
+                if let Some(above) = self.get_chunk(position.plus(IVec3::Y)) {
+                    if above.get_transparency(Transparency::Computed) && !above.get_transparency(Transparency::NegY) {
+                        self.generation_queue.push_back((x, z));
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn generate_meshes(&mut self, device: &Device, chunk_bind_group_layout: &BindGroupLayout, statistics: &mut Statistics) {
+        while let Some(position) = self.mesh_queue.pop_front() {
+            let chunk = self.get_chunk(position).unwrap();
+            let neighbours = self.neighbours(position).unwrap();
+            if chunk.non_air_block_count == Chunk::MAX_BLOCK_COUNT &&
+                !neighbours.pos_x.get_transparency(Transparency::NegX) &&
+                !neighbours.neg_x.get_transparency(Transparency::PosX) &&
+                !neighbours.pos_y.get_transparency(Transparency::NegY) &&
+                !neighbours.neg_y.get_transparency(Transparency::PosY) &&
+                !neighbours.pos_z.get_transparency(Transparency::NegZ) &&
+                !neighbours.neg_z.get_transparency(Transparency::PosZ) {
+                statistics.full_invisible_chunks += 1;
+                continue;
+            }
+            let (mesh, info) = ChunkMesh::generate(&device, position, &chunk, neighbours, &chunk_bind_group_layout);
+            statistics.chunk_mesh_generated(info);
+            self.add_mesh(position, mesh);
+        }
+    }
+
     pub fn add_chunk(&mut self, position: ChunkPosition, chunk: Chunk) {
         let index = ChunkIndex(self.chunks.len().try_into().unwrap());
         self.chunks.push(chunk);
