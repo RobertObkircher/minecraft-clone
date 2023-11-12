@@ -12,14 +12,15 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
     BindingResource, BindingType, BufferBindingType, BufferSize, BufferUsages, Color,
-    CommandEncoderDescriptor, CompareFunction, DepthStencilState, Device, DeviceDescriptor,
-    Extent3d, Face, Features, FragmentState, IndexFormat, Instance, Limits, LoadOp,
-    MultisampleState, Operations, PipelineLayoutDescriptor, PowerPreference, PresentMode,
-    PrimitiveState, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
-    RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType,
-    ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, SurfaceConfiguration, Texture,
-    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
-    TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
+    ColorTargetState, CommandEncoderDescriptor, CompareFunction, DepthStencilState, Device,
+    DeviceDescriptor, Extent3d, Face, Features, FragmentState, IndexFormat, Instance, Limits,
+    LoadOp, MultisampleState, Operations, PipelineLayout, PipelineLayoutDescriptor,
+    PowerPreference, PresentMode, PrimitiveState, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline,
+    RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType, ShaderModuleDescriptor,
+    ShaderSource, ShaderStages, StoreOp, SurfaceConfiguration, Texture, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
+    TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
@@ -40,6 +41,8 @@ mod chunk;
 mod mesh;
 mod noise;
 mod position;
+#[cfg(feature = "reload")]
+mod reload;
 mod statistics;
 mod terrain;
 mod texture;
@@ -242,40 +245,20 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         label: None,
     });
 
-    let shader = device.create_shader_module(ShaderModuleDescriptor {
-        label: None,
-        source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
-    });
-
     let mut depth = create_depth_texture(&device, &config);
 
-    let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-        label: None,
-        layout: Some(&pipeline_layout),
-        vertex: VertexState {
-            module: &shader,
-            entry_point: "vs_main",
-            buffers: &[ChunkMesh::VERTEX_BUFFER_LAYOUT],
-        },
-        fragment: Some(FragmentState {
-            module: &shader,
-            entry_point: "fs_main",
-            targets: &[Some(swapchain_format.into())],
-        }),
-        primitive: PrimitiveState {
-            cull_mode: Some(Face::Back),
-            ..Default::default()
-        },
-        depth_stencil: Some(DepthStencilState {
-            format: DEPTH_TEXTURE_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: CompareFunction::Less,
-            stencil: Default::default(),
-            bias: Default::default(),
-        }),
-        multisample: MultisampleState::default(),
-        multiview: None,
-    });
+    #[cfg(not(feature = "reload"))]
+    let render_pipeline = Some(create_chunk_shader_and_render_pipeline(
+        &device,
+        &pipeline_layout,
+        swapchain_format.into(),
+        include_str!("shader.wgsl"),
+    ));
+
+    #[cfg(feature = "reload")]
+    let mut render_pipeline_reloader = reload::Reloader::new(file!(), "shader.wgsl");
+    #[cfg(feature = "reload")]
+    let mut render_pipeline = None;
 
     let delta_time = Duration::from_millis(16).as_secs_f32();
 
@@ -304,6 +287,42 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     }
                     WindowEvent::RedrawRequested => {
                         window.request_redraw();
+
+                        #[cfg(feature = "reload")]
+                        if let Some(content) = render_pipeline_reloader.get_changed_content() {
+                            render_pipeline = None;
+                            if let Some(bytes) = content {
+                                let source = std::str::from_utf8(bytes).unwrap();
+
+                                match reload::validate_shader_module(
+                                    &device.features(),
+                                    &device.limits(),
+                                    "shader.wgsl",
+                                    wgpu::core::pipeline::ShaderModuleSource::Wgsl(Cow::Borrowed(&source)),
+                                ) {
+                                    Ok(entrypoints) => {
+                                        // during modifications sometimes an empty file was read, 
+                                        // which passed validation but didn't have the entryptions
+                                        if entrypoints.iter().any(|it| it == "vs_main") && entrypoints.iter().any(|it| it == "fs_main") {
+                                            render_pipeline = Some(create_chunk_shader_and_render_pipeline(&device, &pipeline_layout, swapchain_format.into(), source));
+                                        } else {
+                                            log::error!("Missing shader entrypoints");
+                                        }
+                                    },
+                                    Err(e) => {
+                                        log::error!("Shader validation failed: {e}");
+                                    }
+                                }
+                            } else {
+                                log::error!("Missing shader source");
+                            }
+                        }
+
+                        let render_pipeline = if let Some(pipeline) = &render_pipeline {
+                            pipeline
+                        } else {
+                            return;
+                        };
 
                         world.generate_chunks(&mut terrain, &mut statistics);
                         world.generate_meshes(&device, &chunk_bind_group_layout, &mut statistics);
@@ -441,4 +460,44 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             _ => {}
         }
     }).unwrap();
+}
+
+fn create_chunk_shader_and_render_pipeline(
+    device: &Device,
+    pipeline_layout: &PipelineLayout,
+    target: ColorTargetState,
+    source: &str,
+) -> RenderPipeline {
+    let shader = device.create_shader_module(ShaderModuleDescriptor {
+        label: Some("chunks shader"),
+        source: ShaderSource::Wgsl(Cow::Borrowed(source)),
+    });
+
+    device.create_render_pipeline(&RenderPipelineDescriptor {
+        label: None,
+        layout: Some(pipeline_layout),
+        vertex: VertexState {
+            module: &shader,
+            entry_point: "vs_main",
+            buffers: &[ChunkMesh::VERTEX_BUFFER_LAYOUT],
+        },
+        fragment: Some(FragmentState {
+            module: &shader,
+            entry_point: "fs_main",
+            targets: &[Some(target)],
+        }),
+        primitive: PrimitiveState {
+            cull_mode: Some(Face::Back),
+            ..Default::default()
+        },
+        depth_stencil: Some(DepthStencilState {
+            format: DEPTH_TEXTURE_FORMAT,
+            depth_write_enabled: true,
+            depth_compare: CompareFunction::Less,
+            stencil: Default::default(),
+            bias: Default::default(),
+        }),
+        multisample: MultisampleState::default(),
+        multiview: None,
+    })
 }
