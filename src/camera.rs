@@ -1,4 +1,4 @@
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::{FRAC_PI_2, TAU};
 
 use glam::Vec3;
 
@@ -20,7 +20,7 @@ pub struct ComputedVectors {
 }
 
 impl Camera {
-    pub const MAX_UP_DOWN: f32 = PI - 0.0001;
+    pub const MAX_UP_DOWN: f32 = FRAC_PI_2 - 0.0001;
 
     pub fn new(position: Vec3) -> Self {
         Self {
@@ -34,8 +34,8 @@ impl Camera {
             x: self.ccw_y_rot_radians.cos() * self.up_down_radians.cos(),
             y: self.up_down_radians.sin(),
             z: -self.ccw_y_rot_radians.sin() * self.up_down_radians.cos(),
-        }
-        .normalize();
+        };
+        debug_assert!(direction.is_normalized());
         let world_up = Vec3::Y;
         let right = direction.cross(world_up).normalize();
         let up = right.cross(direction).normalize();
