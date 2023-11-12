@@ -57,6 +57,7 @@ impl World {
                 if let Some(chunk) = chunk {
                     self.add_chunk(position, chunk);
                 } else {
+                    statistics.air_chunks += 1;
                     self.add_air_chunk(position);
                 }
 

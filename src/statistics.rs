@@ -11,6 +11,7 @@ pub struct Statistics {
     pub total_chunk_time: Duration,
     pub total_chunk_mesh_time: Duration,
     pub full_invisible_chunks: usize,
+    pub air_chunks: usize,
 }
 
 pub struct FrameInfo {
@@ -40,6 +41,7 @@ impl Statistics {
             total_chunk_time: Duration::ZERO,
             total_chunk_mesh_time: Duration::ZERO,
             full_invisible_chunks: 0,
+            air_chunks: 0,
         }
     }
 
@@ -118,7 +120,7 @@ impl Statistics {
                          1000.0 * chunk_mesh_infos_duration / chunk_mesh_infos.len() as f64,
                 )?;
             }
-            writeln!(w, "    full but invisible: {}", self.full_invisible_chunks)?;
+            writeln!(w, "    full but invisible: {}, air: {}", self.full_invisible_chunks, self.air_chunks)?;
         }
 
         let size = mem::size_of::<Statistics>() +
