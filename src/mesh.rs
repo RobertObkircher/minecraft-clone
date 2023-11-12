@@ -5,7 +5,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferAddress, BufferBindingType, BufferSize, BufferUsages, Device, ShaderStages, VertexAttribute, VertexBufferLayout, VertexFormat, VertexStepMode};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
-use crate::chunk::{Block, Chunk};
+use crate::chunk::{Block, Chunk, Transparency};
 use crate::position::ChunkPosition;
 use crate::statistics::ChunkMeshInfo;
 use crate::world::ChunkNeighbours;
@@ -27,56 +27,97 @@ struct Vertex {
 }
 
 impl ChunkMesh {
+    #[rustfmt::skip]
     pub fn generate(device: &Device, position: ChunkPosition, chunk: &Chunk, neighbours: ChunkNeighbours, bind_group_layout: &BindGroupLayout) -> (ChunkMesh, ChunkMeshInfo) {
         let start = Instant::now();
 
         let mut vertices = vec![];
         let mut indices: Vec<u16> = vec![];
 
-        for x in 0..Chunk::SIZE {
-            for y in 0..Chunk::SIZE {
-                for z in 0..Chunk::SIZE {
+        let mut add_face = |xyz: (usize, usize, usize), face_index: u32, neighbour: &Block| {
+            if neighbour.transparent() {
+                let (is, texture) = [
+                    ([8, 9, 10, 10, 11, 8], [1, 0]),
+                    ([12, 13, 14, 14, 15, 12], [1, 0]),
+                    ([16, 17, 18, 18, 19, 16], [0, 0]),
+                    ([20, 21, 22, 22, 23, 20], [0, 1]),
+                    ([0, 1, 2, 2, 3, 0], [1, 0]),
+                    ([4, 5, 6, 6, 7, 4], [1, 1])
+                ][face_index as usize];
+
+                let offset = u16::try_from(vertices.len()).unwrap();
+                indices.extend((0..6).map(|i| i + offset));
+                vertices.extend(is.iter().map(|i| {
+                    let (mut pos, mut tex_coord) = VERTICES[*i as usize];
+                    pos[0] += xyz.0 as f32;
+                    pos[1] += xyz.1 as f32;
+                    pos[2] += xyz.2 as f32;
+
+                    let u_tiles = 2.0;
+                    let v_tiles = 2.0;
+                    tex_coord[0] += texture[0] as f32;
+                    tex_coord[1] += texture[1] as f32;
+                    tex_coord[0] /= u_tiles;
+                    tex_coord[1] /= v_tiles;
+                    Vertex {
+                        pos,
+                        tex_coord,
+                        face_index,
+                    }
+                }));
+            }
+        };
+
+        const S: usize = Chunk::SIZE;
+        const E: usize = S - 1; // end
+
+        for x in 0..S {
+            for y in 0..S {
+                for z in 0..S {
                     if let Block::Air = chunk.blocks[x][y][z] {
                         continue;
                     }
+                    let xyz = (x, y, z);
 
-                    let mut add_face = |is: [u16; 6], texture: [u16; 2], face_index: u32, visible: bool| {
-                        if visible {
-                            let offset = u16::try_from(vertices.len()).unwrap();
-                            indices.extend((0..6).map(|i| i + offset));
-                            vertices.extend(is.iter().map(|i| {
-                                let (mut pos, mut tex_coord) = VERTICES[*i as usize];
-                                pos[0] += x as f32;
-                                pos[1] += y as f32;
-                                pos[2] += z as f32;
-
-                                let u_tiles = 2.0;
-                                let v_tiles = 2.0;
-                                tex_coord[0] += texture[0] as f32;
-                                tex_coord[1] += texture[1] as f32;
-                                tex_coord[0] /= u_tiles;
-                                tex_coord[1] /= v_tiles;
-                                Vertex {
-                                    pos,
-                                    tex_coord,
-                                    face_index,
-                                }
-                            }));
-                        }
-                    };
-                    let last = Chunk::SIZE - 1;
-
-                    add_face([0, 1, 2, 2, 3, 0], [1, 0], 4, z == last || chunk.blocks[x][y][z + 1].transparent());
-                    add_face([4, 5, 6, 6, 7, 4], [1, 1], 5, z == 0 || chunk.blocks[x][y][z - 1].transparent());
-
-                    add_face([8, 9, 10, 10, 11, 8], [1, 0], 0, x == last || chunk.blocks[x + 1][y][z].transparent());
-                    add_face([12, 13, 14, 14, 15, 12], [1, 0], 1, x == 0 || chunk.blocks[x - 1][y][z].transparent());
-
-                    add_face([16, 17, 18, 18, 19, 16], [0, 0], 2, y == last || chunk.blocks[x][y + 1][z].transparent());
-                    add_face([20, 21, 22, 22, 23, 20], [0, 1], 3, y == 0 || chunk.blocks[x][y - 1][z].transparent());
+                    if x != E { add_face(xyz, 0, &chunk.blocks[x + 1][y][z]); }
+                    if x != 0 { add_face(xyz, 1, &chunk.blocks[x - 1][y][z]); }
+                    if y != E { add_face(xyz, 2, &chunk.blocks[x][y + 1][z]); }
+                    if y != 0 { add_face(xyz, 3, &chunk.blocks[x][y - 1][z]); }
+                    if z != E { add_face(xyz, 4, &chunk.blocks[x][y][z + 1]); }
+                    if z != 0 { add_face(xyz, 5, &chunk.blocks[x][y][z - 1]); }
                 }
             }
         }
+
+        let mut make_face = |offset: (usize, usize, usize), step: (usize, usize, usize), face_index: u32, neighbour: &Chunk, transparency: Transparency| {
+            if neighbour.get_transparency(transparency) {
+                for x in (offset.0..S).step_by(step.0) {
+                    for y in (offset.1..S).step_by(step.1) {
+                        for z in (offset.2..S).step_by(step.2) {
+                            if let Block::Air = chunk.blocks[x][y][z] {
+                                continue;
+                            }
+                            let ix = if step.0 == 1 { x } else if offset.0 == 0 { E } else { 0 };
+                            let iy = if step.1 == 1 { y } else if offset.1 == 0 { E } else { 0 };
+                            let iz = if step.2 == 1 { z } else if offset.2 == 0 { E } else { 0 };
+
+                            add_face((x, y, z), face_index, &neighbour.blocks[ix][iy][iz]);
+                        }
+                    }
+                }
+            };
+        };
+
+        make_face((E, 0, 0), (S, 1, 1), 0, neighbours.pos_x, Transparency::NegX);
+        make_face((0, 0, 0), (S, 1, 1), 1, neighbours.neg_x, Transparency::PosX);
+
+        make_face((0, E, 0), (1, S, 1), 2, neighbours.pos_y, Transparency::NegY);
+        make_face((0, 0, 0), (1, S, 1), 3, neighbours.neg_y, Transparency::PosY);
+
+        make_face((0, 0, E), (1, 1, S), 4, neighbours.pos_z, Transparency::NegZ);
+        make_face((0, 0, 0), (1, 1, S), 5, neighbours.neg_z, Transparency::PosZ);
+
+
         let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Chunk Vertex Buffer"),
             contents: bytemuck::cast_slice(&vertices),
