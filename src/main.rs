@@ -55,7 +55,7 @@ fn main() {
     let event_loop = EventLoop::new().unwrap();
 
     let window = WindowBuilder::new()
-        .with_title("Paper world!")
+        .with_title("Hello, world!")
         .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0))
         .build(&event_loop)
         .unwrap();
