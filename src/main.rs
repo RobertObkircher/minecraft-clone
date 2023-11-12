@@ -9,7 +9,7 @@ use bytemuck::{Pod, Zeroable};
 use glam::{IVec3, Mat4, Vec3};
 use log::info;
 use pollster;
-use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BufferAddress, BufferBindingType, BufferSize, BufferUsages, Color, CommandEncoderDescriptor, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, Face, Features, FragmentState, IndexFormat, Instance, Limits, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode};
+use wgpu::{BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BufferAddress, BufferBindingType, BufferSize, BufferUsages, Color, CommandEncoderDescriptor, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, Face, Features, FragmentState, IndexFormat, Instance, Limits, LoadOp, MultisampleState, Operations, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, SurfaceConfiguration, Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState, VertexStepMode};
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
@@ -21,6 +21,7 @@ use crate::chunk::{Chunk, Transparency};
 use crate::mesh::ChunkMesh;
 use crate::statistics::{FrameInfo, Statistics};
 use crate::terrain::{TerrainGenerator, WorldSeed};
+use crate::texture::BlockTexture;
 use crate::world::{BlockPosition, ChunkPosition, World};
 
 mod camera;
@@ -30,6 +31,7 @@ mod mesh;
 mod terrain;
 mod noise;
 mod statistics;
+mod texture;
 
 fn main() {
     env_logger::init();
@@ -108,7 +110,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     }, None).await.expect("Failed to create device");
 
     let swapchain_capabilities = surface.get_capabilities(&adapter);
-    let swapchain_format = swapchain_capabilities.formats[0];
+    let swapchain_format = swapchain_capabilities.formats.iter().copied()
+        .find(|it| it.is_srgb())
+        .expect("Expected srgb surface");
+
     let size = window.inner_size();
     let mut config = SurfaceConfiguration {
         usage: TextureUsages::RENDER_ATTACHMENT,
@@ -145,6 +150,22 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                     has_dynamic_offset: false,
                     min_binding_size: BufferSize::new(12),
                 },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 2,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Texture {
+                    sample_type: TextureSampleType::Float { filterable: true },
+                    view_dimension: TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            BindGroupLayoutEntry {
+                binding: 3,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Sampler(SamplerBindingType::NonFiltering), // TODO filtering?
                 count: None,
             }
         ],
@@ -187,6 +208,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
 
+    let blocks = BlockTexture::from_bitmap_bytes(&device, &queue, include_bytes!("blocks.bmp"), "blocks.bmp");
+
     let bind_group = device.create_bind_group(&BindGroupDescriptor {
         layout: &bind_group_layout,
         entries: &[
@@ -197,6 +220,14 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
             BindGroupEntry {
                 binding: 1,
                 resource: player_chunk_uniform_buffer.as_entire_binding(),
+            },
+            BindGroupEntry {
+                binding: 2,
+                resource: BindingResource::TextureView(&blocks.view),
+            },
+            BindGroupEntry {
+                binding: 3,
+                resource: BindingResource::Sampler(&blocks.sampler),
             }
         ],
         label: None,

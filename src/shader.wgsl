@@ -6,6 +6,8 @@ struct VertexOutput {
 
 @group(0) @binding(0) var<uniform> transform: mat4x4<f32>;
 @group(0) @binding(1) var<uniform> player_chunk: vec3<i32>;
+@group(0) @binding(2) var t_diffuse: texture_2d<f32>;
+@group(0) @binding(3) var s_diffuse: sampler;
 
 @group(1) @binding(0) var<uniform> chunk_position: vec3<i32>;
 
@@ -30,17 +32,19 @@ fn vs_main(
 fn fs_main(vertex: VertexOutput) -> @location(0) vec4<f32> {
     // parameters:
     let ambient_strength = 0.2;
+    let direction_strength = 0.8;
     let to_light = normalize(vec3<f32>(-0.1, 1.0, 0.2));
     let light_color = vec3<f32>(1.0, 1.0, 1.0);
 
     let ambient = ambient_strength * light_color;
 
     let normal = normalize(vertex.normal); // currently all normals should already be normalized, but do it anyway
-    let diffuse = max(dot(normal, to_light), 0.0) * light_color;
+    let diffuse = max(dot(normal, to_light), 0.0) * direction_strength * light_color;
 
-    var object_color = vec3<f32>(101.0, 132.0, 80.0) / 255.0;
-    object_color = object_color * object_color;
-    if any(vertex.tex_coord < vec2<f32>(0.05, 0.05)) || any(vertex.tex_coord > vec2<f32>(0.95, 0.95)) {
+    var object_color = textureSample(t_diffuse, s_diffuse, vertex.tex_coord).xyz;
+
+    let border = -1.0f; // disabled for now
+    if any(vertex.tex_coord < vec2<f32>(border, border)) || any(vertex.tex_coord > vec2<f32>(1.0, 1.0) - border) {
         object_color = vec3<f32>(0.02, 0.02, 0.02);
     }
 
