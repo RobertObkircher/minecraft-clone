@@ -840,6 +840,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "minecraft-clone"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "env_logger",
+ "glam",
+ "log",
+ "pollster",
+ "rand",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1038,20 +1052,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4586edfe4c648c71797a74c84bacb32b52b212eff5dfe2bb9f2c599844023e7"
 dependencies = [
  "ttf-parser",
-]
-
-[[package]]
-name = "paper-world"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "env_logger",
- "glam",
- "log",
- "pollster",
- "rand",
- "wgpu",
- "winit",
 ]
 
 [[package]]

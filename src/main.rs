@@ -36,7 +36,7 @@ mod position;
 
 fn main() {
     env_logger::init();
-    info!("Hello, paper-world!");
+    info!("Hello, world!");
 
     let event_loop = EventLoop::new().unwrap();
 
