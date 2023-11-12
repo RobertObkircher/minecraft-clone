@@ -29,15 +29,22 @@ impl ChunkMesh {
                         continue;
                     }
 
-                    let mut add_face = |is: [u16; 6], face_index: u32, visible: bool| {
+                    let mut add_face = |is: [u16; 6], texture: [u16; 2], face_index: u32, visible: bool| {
                         if visible {
                             let offset = u16::try_from(vertices.len()).unwrap();
                             indices.extend((0..6).map(|i| i + offset));
                             vertices.extend(is.iter().map(|i| {
-                                let (mut pos, tex_coord) = VERTICES[*i as usize];
+                                let (mut pos, mut tex_coord) = VERTICES[*i as usize];
                                 pos[0] += x as f32;
                                 pos[1] += y as f32;
                                 pos[2] += z as f32;
+
+                                let u_tiles = 2.0;
+                                let v_tiles = 2.0;
+                                tex_coord[0] += texture[0] as f32;
+                                tex_coord[1] += texture[1] as f32;
+                                tex_coord[0] /= u_tiles;
+                                tex_coord[1] /= v_tiles;
                                 Vertex {
                                     pos,
                                     tex_coord,
@@ -48,14 +55,14 @@ impl ChunkMesh {
                     };
                     let last = Chunk::SIZE - 1;
 
-                    add_face([0, 1, 2, 2, 3, 0], 4, z == last || chunk.blocks[x][y][z + 1].transparent());
-                    add_face([4, 5, 6, 6, 7, 4], 5, z == 0 || chunk.blocks[x][y][z - 1].transparent());
+                    add_face([0, 1, 2, 2, 3, 0], [1, 0], 4, z == last || chunk.blocks[x][y][z + 1].transparent());
+                    add_face([4, 5, 6, 6, 7, 4], [1, 1], 5, z == 0 || chunk.blocks[x][y][z - 1].transparent());
 
-                    add_face([8, 9, 10, 10, 11, 8], 0, x == last || chunk.blocks[x + 1][y][z].transparent());
-                    add_face([12, 13, 14, 14, 15, 12], 1, x == 0 || chunk.blocks[x - 1][y][z].transparent());
+                    add_face([8, 9, 10, 10, 11, 8], [1, 0], 0, x == last || chunk.blocks[x + 1][y][z].transparent());
+                    add_face([12, 13, 14, 14, 15, 12], [1, 0], 1, x == 0 || chunk.blocks[x - 1][y][z].transparent());
 
-                    add_face([16, 17, 18, 18, 19, 16], 2, y == last || chunk.blocks[x][y + 1][z].transparent());
-                    add_face([20, 21, 22, 22, 23, 20], 3, y == 0 || chunk.blocks[x][y - 1][z].transparent());
+                    add_face([16, 17, 18, 18, 19, 16], [0, 0], 2, y == last || chunk.blocks[x][y + 1][z].transparent());
+                    add_face([20, 21, 22, 22, 23, 20], [0, 1], 3, y == 0 || chunk.blocks[x][y - 1][z].transparent());
                 }
             }
         }
@@ -105,32 +112,33 @@ const fn vertex(pos: [i8; 3], tc: [i8; 2]) -> ([f32; 4], [f32; 2]) {
 }
 
 const VERTICES: [([f32; 4], [f32; 2]); 24] = [
-    // POS_Z
-    vertex([0, 0, 1], [0, 0]),
-    vertex([1, 0, 1], [1, 0]),
-    vertex([1, 1, 1], [1, 1]),
-    vertex([0, 1, 1], [0, 1]),
-    // NEG_Z
+    // texture: for sides v = !y
+    // POS_Z u=x
+    vertex([0, 0, 1], [0, 1]),
+    vertex([1, 0, 1], [1, 1]),
+    vertex([1, 1, 1], [1, 0]),
+    vertex([0, 1, 1], [0, 0]),
+    // NEG_Z u=!x
     vertex([0, 1, 0], [1, 0]),
     vertex([1, 1, 0], [0, 0]),
     vertex([1, 0, 0], [0, 1]),
     vertex([0, 0, 0], [1, 1]),
-    // POS_X
-    vertex([1, 0, 0], [0, 0]),
+    // POS_X u=!z
+    vertex([1, 0, 0], [1, 1]),
     vertex([1, 1, 0], [1, 0]),
-    vertex([1, 1, 1], [1, 1]),
+    vertex([1, 1, 1], [0, 0]),
     vertex([1, 0, 1], [0, 1]),
-    // NEG_X
-    vertex([0, 0, 1], [1, 0]),
-    vertex([0, 1, 1], [0, 0]),
-    vertex([0, 1, 0], [0, 1]),
-    vertex([0, 0, 0], [1, 1]),
-    // POS_Y
+    // NEG_X u=z
+    vertex([0, 0, 1], [1, 1]),
+    vertex([0, 1, 1], [1, 0]),
+    vertex([0, 1, 0], [0, 0]),
+    vertex([0, 0, 0], [0, 1]),
+    // POS_Y uv = xz
     vertex([1, 1, 0], [1, 0]),
     vertex([0, 1, 0], [0, 0]),
     vertex([0, 1, 1], [0, 1]),
     vertex([1, 1, 1], [1, 1]),
-    // NEG_Y
+    // NEG_Y uv=!x!z
     vertex([1, 0, 1], [0, 0]),
     vertex([0, 0, 1], [1, 0]),
     vertex([0, 0, 0], [1, 1]),

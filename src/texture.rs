@@ -85,7 +85,7 @@ fn decode_bitmap(raw: &[u8]) -> DecodedImage {
     let mut data = Vec::with_capacity((4 * width * height) as usize);
 
     let row_length = ((3 * width as usize + 3) / 4) * 4;
-    for row in 0..height as usize {
+    for row in (0..height as usize).rev() {
         let row_start = bf_off_bits as usize + row * row_length;
         for column in 0..width as usize {
             let start = row_start + column * 3;
