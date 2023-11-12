@@ -278,6 +278,10 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             for y in (0..height).into_iter().map(|it| it - height / 2).rev() {
                                 let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
 
+                                if world.get_chunk_mut(position).is_some() {
+                                    continue
+                                }
+
                                 let (chunk, chunk_info) = terrain.fill_chunk(position);
                                 statistics.chunk_generated(chunk_info);
                                 if let Some(chunk) = chunk {
@@ -288,7 +292,18 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
                                 while let Some(position) = world.mesh_queue.pop_front() {
                                     let chunk = world.get_chunk(position).unwrap();
-                                    let (mesh, info) = ChunkMesh::new(&device, position, &chunk, &chunk_bind_group_layout);
+                                    let neighbours = world.neighbours(position).unwrap();
+                                    if chunk.non_air_block_count == Chunk::MAX_BLOCK_COUNT &&
+                                        !neighbours.pos_x.get_transparency(Transparency::NegX) &&
+                                        !neighbours.neg_x.get_transparency(Transparency::PosX) &&
+                                        !neighbours.pos_y.get_transparency(Transparency::NegY) &&
+                                        !neighbours.neg_y.get_transparency(Transparency::PosY) &&
+                                        !neighbours.pos_z.get_transparency(Transparency::NegZ) &&
+                                        !neighbours.neg_z.get_transparency(Transparency::PosZ) {
+                                        statistics.full_invisible_chunks += 1;
+                                        continue;
+                                    }
+                                    let (mesh, info) = ChunkMesh::generate(&device, position, &chunk, neighbours, &chunk_bind_group_layout);
                                     statistics.chunk_mesh_generated(info);
                                     world.add_mesh(position, mesh);
                                 }

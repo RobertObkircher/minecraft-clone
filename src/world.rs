@@ -67,7 +67,7 @@ impl World {
         self.position_to_index.get(&position).map(|it| &mut self.chunks[it.0 as usize])
     }
 
-    fn neighbours(&self, position: ChunkPosition) -> Option<ChunkNeighbours> {
+    pub fn neighbours(&self, position: ChunkPosition) -> Option<ChunkNeighbours> {
         Some(ChunkNeighbours {
             pos_x: self.get_chunk(position.plus(IVec3::X))?,
             neg_x: self.get_chunk(position.plus(IVec3::NEG_X))?,
@@ -101,13 +101,13 @@ impl World {
     }
 }
 
-struct ChunkNeighbours<'a> {
-    pos_x: &'a Chunk,
-    neg_x: &'a Chunk,
-    pos_y: &'a Chunk,
-    neg_y: &'a Chunk,
-    pos_z: &'a Chunk,
-    neg_z: &'a Chunk,
+pub struct ChunkNeighbours<'a> {
+    pub pos_x: &'a Chunk,
+    pub neg_x: &'a Chunk,
+    pub pos_y: &'a Chunk,
+    pub neg_y: &'a Chunk,
+    pub pos_z: &'a Chunk,
+    pub neg_z: &'a Chunk,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]

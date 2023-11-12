@@ -2,6 +2,7 @@ pub struct Chunk {
     pub blocks: [[[Block; Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE],
     pub transparency: u8,
     pub has_valid_mesh: bool,
+    pub non_air_block_count: u16,
 }
 
 pub enum Transparency {
@@ -16,6 +17,8 @@ pub enum Transparency {
 
 impl Chunk {
     pub const SIZE: usize = 16;
+
+    pub const MAX_BLOCK_COUNT: u16 = Chunk::SIZE.pow(3) as u16;
 
     pub fn clear_transparency(&mut self) {
         self.transparency = 0;
@@ -60,6 +63,7 @@ impl Default for Chunk {
             blocks: Default::default(),
             transparency: 0,
             has_valid_mesh: false,
+            non_air_block_count: 0,
         }
     }
 }

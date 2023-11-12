@@ -7,7 +7,7 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use crate::chunk::{Block, Chunk};
 use crate::statistics::ChunkMeshInfo;
-use crate::world::ChunkPosition;
+use crate::world::{ChunkNeighbours, ChunkPosition};
 
 pub struct ChunkMesh {
     pub vertex_buffer: Buffer,
@@ -26,8 +26,9 @@ struct Vertex {
 }
 
 impl ChunkMesh {
-    pub fn new(device: &Device, position: ChunkPosition, chunk: &Chunk, bind_group_layout: &BindGroupLayout) -> (ChunkMesh, ChunkMeshInfo) {
+    pub fn generate(device: &Device, position: ChunkPosition, chunk: &Chunk, neighbours: ChunkNeighbours, bind_group_layout: &BindGroupLayout) -> (ChunkMesh, ChunkMeshInfo) {
         let start = Instant::now();
+
         let mut vertices = vec![];
         let mut indices: Vec<u16> = vec![];
 
