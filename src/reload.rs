@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::fs;
 use std::path::PathBuf;
+use std::str::from_utf8;
 
 use log::error;
 use wgpu::core::pipeline::{CreateShaderModuleError, ShaderError, ShaderModuleSource};
@@ -30,7 +31,7 @@ impl Reloader {
         let new_contents = fs::read(&self.path)
             .map_err(|e| {
                 // only log this once
-                if self.contents.is_some() {
+                if self.contents.is_some() || self.has_changed {
                     error!("Could not read file {}: {}", self.path.to_string_lossy(), e)
                 }
             })
@@ -48,13 +49,51 @@ impl Reloader {
     }
 }
 
+pub fn validate_shader<'a>(
+    file_contents: Option<&'a [u8]>,
+    features: &Features,
+    limits: &Limits,
+    label: &str,
+    entry_points: &[&str],
+) -> Result<&'a str, Cow<'static, str>> {
+    if let Some(bytes) = file_contents {
+        let source = from_utf8(bytes).map_err(|_| Cow::Borrowed("File is not valid utf8"))?;
+        let module_source = ShaderModuleSource::Wgsl(Cow::Borrowed(&source));
+        match validate_shader_module(features, limits, label, module_source) {
+            Ok(parsed_entry_points) => {
+                let mut message = String::new();
+                for missing in entry_points
+                    .iter()
+                    .filter(|it| !parsed_entry_points.iter().any(|e| e == *it))
+                {
+                    if !message.is_empty() {
+                        message += ", ";
+                    }
+                    message += missing;
+                }
+
+                // during modifications sometimes an empty file was read,
+                // which passed validation but didn't have the entry points
+                if message.is_empty() {
+                    Ok(source)
+                } else {
+                    Err(Cow::Owned(format!("Missing entry points: {message}")))
+                }
+            }
+            Err(e) => Err(Cow::Owned(format!("Shader validation failed: {e}"))),
+        }
+    } else {
+        Err(Cow::Borrowed("Could not read file"))
+    }
+}
+
 /// I couldn't find a fallible way to create a shader module.
 /// Instead of catching panics, this is a best-effort validation for hot-reloading.
 /// It should detect most parse and validation errors but it doesn't generate
 /// backend-specific code and it assumes "downlevel" flags are true.
 ///
 /// The code was adapted from wgpu-core-0.18.0/src/device/resource.rs:1218
-pub fn validate_shader_module(
+fn validate_shader_module(
     features: &Features,
     limits: &Limits,
     label: &str,

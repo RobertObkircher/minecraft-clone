@@ -248,12 +248,12 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut depth = create_depth_texture(&device, &config);
 
     #[cfg(not(feature = "reload"))]
-    let render_pipeline = Some(create_chunk_shader_and_render_pipeline(
+    let render_pipeline = create_chunk_shader_and_render_pipeline(
         &device,
         &pipeline_layout,
         swapchain_format.into(),
         include_str!("shader.wgsl"),
-    ));
+    );
 
     #[cfg(feature = "reload")]
     let mut render_pipeline_reloader = reload::Reloader::new(file!(), "shader.wgsl");
@@ -289,35 +289,16 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         window.request_redraw();
 
                         #[cfg(feature = "reload")]
-                        if let Some(content) = render_pipeline_reloader.get_changed_content() {
-                            render_pipeline = None;
-                            if let Some(bytes) = content {
-                                let source = std::str::from_utf8(bytes).unwrap();
-
-                                match reload::validate_shader_module(
-                                    &device.features(),
-                                    &device.limits(),
-                                    "shader.wgsl",
-                                    wgpu::core::pipeline::ShaderModuleSource::Wgsl(Cow::Borrowed(&source)),
-                                ) {
-                                    Ok(entrypoints) => {
-                                        // during modifications sometimes an empty file was read, 
-                                        // which passed validation but didn't have the entryptions
-                                        if entrypoints.iter().any(|it| it == "vs_main") && entrypoints.iter().any(|it| it == "fs_main") {
-                                            render_pipeline = Some(create_chunk_shader_and_render_pipeline(&device, &pipeline_layout, swapchain_format.into(), source));
-                                        } else {
-                                            log::error!("Missing shader entrypoints");
-                                        }
-                                    },
-                                    Err(e) => {
-                                        log::error!("Shader validation failed: {e}");
-                                    }
+                        if let Some(changed) = render_pipeline_reloader.get_changed_content() {
+                            render_pipeline = match reload::validate_shader(changed, &device.features(), &device.limits(), "shader.wgsl", &["vs_main", "fs_main"]) {
+                                Ok(source) => Some(create_chunk_shader_and_render_pipeline(&device, &pipeline_layout, swapchain_format.into(), source)),
+                                Err(e) => {
+                                    log::error!("Error while re-loading shader: {e}");
+                                    None
                                 }
-                            } else {
-                                log::error!("Missing shader source");
                             }
                         }
-
+                        #[cfg(feature = "reload")]
                         let render_pipeline = if let Some(pipeline) = &render_pipeline {
                             pipeline
                         } else {
