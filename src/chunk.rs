@@ -79,6 +79,7 @@ pub enum Block {
     #[default]
     Air,
     Dirt,
+    Stone,
 }
 
 impl Block {
@@ -86,6 +87,7 @@ impl Block {
         match self {
             Block::Air => true,
             Block::Dirt => false,
+            Block::Stone => false,
         }
     }
 }

@@ -39,16 +39,22 @@ impl ChunkMesh {
         let mut vertices = vec![];
         let mut indices: Vec<u16> = vec![];
 
-        let mut add_face = |xyz: (usize, usize, usize), face_index: u32, neighbour: &Block| {
+        let mut add_face = |xyz: (usize, usize, usize), face_index: u32, block: &Block, neighbour: &Block| {
             if neighbour.transparent() {
-                let (is, texture) = [
-                    ([8, 9, 10, 10, 11, 8], [1, 0]),
-                    ([12, 13, 14, 14, 15, 12], [1, 0]),
-                    ([16, 17, 18, 18, 19, 16], [0, 0]),
-                    ([20, 21, 22, 22, 23, 20], [0, 1]),
-                    ([0, 1, 2, 2, 3, 0], [1, 0]),
-                    ([4, 5, 6, 6, 7, 4], [1, 0])
+                let is = [
+                    [8, 9, 10, 10, 11, 8],
+                    [12, 13, 14, 14, 15, 12],
+                    [16, 17, 18, 18, 19, 16],
+                    [20, 21, 22, 22, 23, 20],
+                    [0, 1, 2, 2, 3, 0],
+                    [4, 5, 6, 6, 7, 4],
                 ][face_index as usize];
+
+                let texture = match block{
+                    Block::Air => unreachable!(),
+                    Block::Dirt => [[1, 0],[1, 0],[0, 0],[0, 1],[1, 0],[1, 0]],
+                    Block::Stone => [[1, 1],[1, 1],[1, 1],[1, 1],[1, 1],[1, 1]],
+                }[face_index as usize];
 
                 let offset = u16::try_from(vertices.len()).unwrap();
                 indices.extend((0..6).map(|i| i + offset));
@@ -79,17 +85,18 @@ impl ChunkMesh {
         for x in 0..S {
             for y in 0..S {
                 for z in 0..S {
-                    if let Block::Air = chunk.blocks[x][y][z] {
+                    let block = &chunk.blocks[x][y][z];
+                    if let Block::Air = block {
                         continue;
                     }
                     let xyz = (x, y, z);
 
-                    if x != E { add_face(xyz, 0, &chunk.blocks[x + 1][y][z]); }
-                    if x != 0 { add_face(xyz, 1, &chunk.blocks[x - 1][y][z]); }
-                    if y != E { add_face(xyz, 2, &chunk.blocks[x][y + 1][z]); }
-                    if y != 0 { add_face(xyz, 3, &chunk.blocks[x][y - 1][z]); }
-                    if z != E { add_face(xyz, 4, &chunk.blocks[x][y][z + 1]); }
-                    if z != 0 { add_face(xyz, 5, &chunk.blocks[x][y][z - 1]); }
+                    if x != E { add_face(xyz, 0, block, &chunk.blocks[x + 1][y][z]); }
+                    if x != 0 { add_face(xyz, 1, block, &chunk.blocks[x - 1][y][z]); }
+                    if y != E { add_face(xyz, 2, block, &chunk.blocks[x][y + 1][z]); }
+                    if y != 0 { add_face(xyz, 3, block, &chunk.blocks[x][y - 1][z]); }
+                    if z != E { add_face(xyz, 4, block, &chunk.blocks[x][y][z + 1]); }
+                    if z != 0 { add_face(xyz, 5, block, &chunk.blocks[x][y][z - 1]); }
                 }
             }
         }
@@ -99,14 +106,15 @@ impl ChunkMesh {
                 for x in (offset.0..S).step_by(step.0) {
                     for y in (offset.1..S).step_by(step.1) {
                         for z in (offset.2..S).step_by(step.2) {
-                            if let Block::Air = chunk.blocks[x][y][z] {
+                            let block = &chunk.blocks[x][y][z];
+                            if let Block::Air = block {
                                 continue;
                             }
                             let ix = if step.0 == 1 { x } else if offset.0 == 0 { E } else { 0 };
                             let iy = if step.1 == 1 { y } else if offset.1 == 0 { E } else { 0 };
                             let iz = if step.2 == 1 { z } else if offset.2 == 0 { E } else { 0 };
 
-                            add_face((x, y, z), face_index, &neighbour.blocks[ix][iy][iz]);
+                            add_face((x, y, z), face_index, block, &neighbour.blocks[ix][iy][iz]);
                         }
                     }
                 }

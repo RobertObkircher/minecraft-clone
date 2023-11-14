@@ -99,11 +99,15 @@ impl TerrainGenerator {
                         block_z as f64 * 0.1,
                     );
 
-                    let density = base_density + noise * 0.0;
+                    let density = base_density * (1.0 + noise.abs());
 
                     result.blocks[x][y][z] = if density > 0.0 {
                         non_air_block_count += 1;
-                        Block::Dirt
+                        if density > 0.1 {
+                            Block::Stone
+                        } else {
+                            Block::Dirt
+                        }
                     } else {
                         Block::Air
                     };
