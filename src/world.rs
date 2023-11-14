@@ -242,7 +242,6 @@ impl World {
     }
 
     pub fn set_block(&mut self, position: BlockPosition, block: Block) -> Option<Block> {
-        info!("set_block {position:?} {block:?}");
         if let Some(chunk) = self.get_chunk_mut(position.chunk()) {
             let relative = position.index() - position.chunk().block().index();
 

@@ -397,17 +397,18 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         // TODO winit bug? changing cursor grab mode here didn't work
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
-                        let max_distance = 20;
                         if is_locked && state == ElementState::Pressed && button == MouseButton::Left {
                             let vs = camera.computed_vectors();
-                            if let (_, Some(position)) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, max_distance) {
+                            if let (_, Some(position)) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, 200) {
+                                info!("set_block {position:?}");
                                 world.set_block(position, Block::Air);
                             }
 
                         }
                         if is_locked && state == ElementState::Pressed && button == MouseButton::Right {
                             let vs = camera.computed_vectors();
-                            if let (Some(position), _) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, max_distance) {
+                            if let (Some(position), _) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, 200) {
+                                info!("set_block {position:?}");
                                 world.set_block(position, Block::Dirt);
                             }
                         }
@@ -429,7 +430,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             window.set_cursor_grab(CursorGrabMode::None).unwrap();
                             is_locked = false;
                         }
-                        let speed = delta_time * 10.0;
+                        let speed = delta_time * 100.0;
                         if let Key::Character(str) = event.logical_key {
                             let vectors = camera.computed_vectors();
                             match str.as_str() {
@@ -440,6 +441,40 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 "p" => if event.state.is_pressed() {
                                     print_statistics ^= true;
                                 },
+                                "q" => if event.state.is_pressed() {                    
+                                    let vs = camera.computed_vectors();
+                                    if let (_, Some(position)) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, 200) {
+                                        info!("explode {position:?}");
+                                        let r = 10;
+                                        for x in 0..2 * r {
+                                            for y in 0..2 * r {
+                                                for z in 0..2 * r {
+                                                    let delta = IVec3::new(x, y, z) - r;
+                                                    if delta.length_squared() <= r * r {
+                                                        world.set_block(position.plus(delta), Block::Air);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                "e" => if event.state.is_pressed() {
+                                    let vs = camera.computed_vectors();
+                                    if let (Some(position), _) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, 200) {
+                                        info!("anti-explode {position:?}");
+                                        let r = 10;
+                                        for x in 0..2 * r {
+                                            for y in 0..2 * r {
+                                                for z in 0..2 * r {
+                                                    let delta = IVec3::new(x, y, z) - r;
+                                                    if delta.length_squared() <= r * r {
+                                                        world.set_block(position.plus(delta), Block::Dirt);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 _ => {}
                             }
                         }
