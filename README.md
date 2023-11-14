@@ -7,6 +7,7 @@ To run:
 
 Controls:
 
+- `mouse click`/`esc` to capture and release the mouse
 - `wasd` for movement
 - `left mouse button` remove block
 - `right mouse button` place block
