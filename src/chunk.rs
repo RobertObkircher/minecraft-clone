@@ -26,12 +26,15 @@ impl Chunk {
     }
 
     pub fn compute_transparency(&mut self) {
+        let mut transparency = 1 << (Transparency::Computed as u8);
         if self.non_air_block_count == Chunk::MAX_BLOCK_COUNT {
+            self.transparency = transparency;
+            return;
+        }
+        if self.non_air_block_count == 0 {
             self.transparency = !0u8;
             return;
         }
-
-        let mut transparency = 1 << (Transparency::Computed as u8);
 
         let s = Chunk::SIZE;
         let mut check = |(ox, oy, oz): (usize, usize, usize), (dx, dy, dz), t: Transparency| {
