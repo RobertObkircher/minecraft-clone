@@ -11,30 +11,44 @@ use crate::position::{BlockPosition, ChunkPosition};
 use crate::statistics::Statistics;
 use crate::terrain::TerrainGenerator;
 
+#[allow(unused)]
 pub struct World {
+    view_distance: u16,
+    highest_generated_chunk: i32,
+    lowest_generated_chunk: i32,
     chunks: Vec<Chunk>,
     position_to_index: HashMap<ChunkPosition, ChunkIndex>,
     position_to_mesh: HashMap<ChunkPosition, ChunkMesh>,
-    generation_queue: VecDeque<(i32, i32)>,
+    generation_queue: VecDeque<(i32, i32, i32)>,
     mesh_queue: VecDeque<ChunkPosition>,
     //simulation_regions: Vec<SimulationRegion>,
 }
 
 impl World {
-    pub fn new(view_distance: u16) -> Self {
+    pub fn new(view_distance: u16, height: u16) -> Self {
         let mut chunk = Chunk::default();
         chunk.transparency = !0u8;
 
-        let mut generation_queue = Vec::<(i32, i32)>::new();
-        let view_distance = view_distance as i32;
-        for x in -view_distance..=view_distance {
-            for z in -view_distance..=view_distance {
-                generation_queue.push((x, z));
+        // 2 -> -1..=0
+        // 3 -> -1..=1
+        // 4 -> -2..=1
+        // 5 -> -2..=2
+        let lowest_generated_chunk = -(height as i32) / 2;
+        let highest_generated_chunk = lowest_generated_chunk + height as i32 - 1;
+
+        let mut generation_queue = Vec::<(i32, i32, i32)>::new();
+        let v = view_distance as i32;
+        for x in -v..=v {
+            for z in -v..=v {
+                generation_queue.push((x, highest_generated_chunk, z));
             }
         }
-        generation_queue.sort_by_key(|(x, z)| x * x + z * z);
+        generation_queue.sort_by_key(|(x, _, z)| x * x + z * z);
 
         Self {
+            view_distance,
+            highest_generated_chunk,
+            lowest_generated_chunk,
             chunks: vec![chunk],
             position_to_index: Default::default(),
             position_to_mesh: Default::default(),
@@ -49,10 +63,10 @@ impl World {
         statistics: &mut Statistics,
         player_chunk: ChunkPosition,
     ) {
-        if let Some((x, z)) = self.generation_queue.pop_front() {
-            let height = 16;
-            for y in (0..height).into_iter().map(|it| it - height / 2).rev() {
+        if let Some((x, mut y, z)) = self.generation_queue.pop_front() {
+            while y >= self.lowest_generated_chunk {
                 let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
+                y -= 1;
 
                 if self.get_chunk(position).is_some() {
                     continue; // guarantee progress even if we would defer it below
@@ -68,12 +82,14 @@ impl World {
                 }
 
                 // defer distant underground chunks
-                if position.index().distance_squared(player_chunk.index()) > 5 {
+                if y >= self.lowest_generated_chunk
+                    && position.index().distance_squared(player_chunk.index()) > 5
+                {
                     if let Some(above) = self.get_chunk(position.plus(IVec3::Y)) {
                         if above.get_transparency(Transparency::Computed)
                             && !above.get_transparency(Transparency::NegY)
                         {
-                            self.generation_queue.push_back((x, z));
+                            self.generation_queue.push_back((x, y, z));
                             break;
                         }
                     }

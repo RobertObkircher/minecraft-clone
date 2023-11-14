@@ -262,7 +262,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
 
     let delta_time = Duration::from_millis(16).as_secs_f32();
 
-    let mut world = World::new(12);
+    let mut world = World::new(12, 16);
     let mut terrain = TerrainGenerator::new(WorldSeed(42));
 
     let mut start = Instant::now();
