@@ -1,11 +1,13 @@
 use std::collections::{HashMap, VecDeque};
+use std::mem;
 
-use glam::IVec3;
-use wgpu::{BindGroupLayout, Device};
+use glam::{IVec3, Vec3};
+use log::info;
+use wgpu::{BindGroupLayout, Device, Queue};
 
-use crate::chunk::{Chunk, Transparency};
+use crate::chunk::{Block, Chunk, Transparency};
 use crate::mesh::ChunkMesh;
-use crate::position::ChunkPosition;
+use crate::position::{BlockPosition, ChunkPosition};
 use crate::statistics::Statistics;
 use crate::terrain::TerrainGenerator;
 
@@ -13,8 +15,8 @@ pub struct World {
     chunks: Vec<Chunk>,
     position_to_index: HashMap<ChunkPosition, ChunkIndex>,
     position_to_mesh: HashMap<ChunkPosition, ChunkMesh>,
-    pub generation_queue: VecDeque<(i32, i32)>,
-    pub mesh_queue: VecDeque<ChunkPosition>,
+    generation_queue: VecDeque<(i32, i32)>,
+    mesh_queue: VecDeque<ChunkPosition>,
     //simulation_regions: Vec<SimulationRegion>,
 }
 
@@ -22,7 +24,6 @@ impl World {
     pub fn new(view_distance: u16) -> Self {
         let mut chunk = Chunk::default();
         chunk.transparency = !0u8;
-        chunk.has_valid_mesh = true;
 
         let mut generation_queue = Vec::<(i32, i32)>::new();
         let view_distance = view_distance as i32;
@@ -42,14 +43,19 @@ impl World {
         }
     }
 
-    pub fn generate_chunks(&mut self, terrain: &mut TerrainGenerator, statistics: &mut Statistics) {
+    pub fn generate_chunks(
+        &mut self,
+        terrain: &mut TerrainGenerator,
+        statistics: &mut Statistics,
+        player_chunk: ChunkPosition,
+    ) {
         if let Some((x, z)) = self.generation_queue.pop_front() {
             let height = 16;
             for y in (0..height).into_iter().map(|it| it - height / 2).rev() {
                 let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
 
-                if self.get_chunk_mut(position).is_some() {
-                    continue;
+                if self.get_chunk(position).is_some() {
+                    continue; // guarantee progress even if we would defer it below
                 }
 
                 let (chunk, chunk_info) = terrain.fill_chunk(position);
@@ -61,27 +67,44 @@ impl World {
                     self.add_air_chunk(position);
                 }
 
-                if let Some(above) = self.get_chunk(position.plus(IVec3::Y)) {
-                    if above.get_transparency(Transparency::Computed)
-                        && !above.get_transparency(Transparency::NegY)
-                    {
-                        self.generation_queue.push_back((x, z));
-                        break;
+                // defer distant underground chunks
+                if position.index().distance_squared(player_chunk.index()) > 5 {
+                    if let Some(above) = self.get_chunk(position.plus(IVec3::Y)) {
+                        if above.get_transparency(Transparency::Computed)
+                            && !above.get_transparency(Transparency::NegY)
+                        {
+                            self.generation_queue.push_back((x, z));
+                            break;
+                        }
                     }
                 }
             }
         }
     }
 
-    pub fn generate_meshes(
+    pub fn update_meshes(
         &mut self,
         device: &Device,
+        queue: &Queue,
         chunk_bind_group_layout: &BindGroupLayout,
         statistics: &mut Statistics,
     ) {
         while let Some(position) = self.mesh_queue.pop_front() {
+            self.get_chunk_mut(position).unwrap().in_mesh_queue = false;
+            let previous_mesh = self.position_to_mesh.remove(&position);
+
             let chunk = self.get_chunk(position).unwrap();
-            let neighbours = self.neighbours(position).unwrap();
+            if chunk.non_air_block_count == 0 {
+                // TODO is it worth it to cache the previous_mesh so that it can be recycled later?
+                continue; // invisible
+            }
+
+            let neighbours = if let Some(neighbours) = self.neighbours(position) {
+                neighbours
+            } else {
+                continue; // we can't generate a mesh if we don't have all neighbours
+            };
+
             if chunk.non_air_block_count == Chunk::MAX_BLOCK_COUNT
                 && !neighbours.pos_x.get_transparency(Transparency::NegX)
                 && !neighbours.neg_x.get_transparency(Transparency::PosX)
@@ -99,9 +122,11 @@ impl World {
                 &chunk,
                 neighbours,
                 &chunk_bind_group_layout,
+                previous_mesh.map(|it| (it, queue)),
             );
             statistics.chunk_mesh_generated(info);
-            self.add_mesh(position, mesh);
+
+            self.position_to_mesh.insert(position, mesh);
         }
     }
 
@@ -109,18 +134,14 @@ impl World {
         let index = ChunkIndex(self.chunks.len().try_into().unwrap());
         self.chunks.push(chunk);
         self.position_to_index.insert(position, index);
-        self.update_mesh(position);
-        self.update_neighbour_meshes(position);
+        self.request_mesh_update(position);
+        self.request_neighbour_mesh_updates(position);
     }
 
     pub fn add_air_chunk(&mut self, position: ChunkPosition) {
         let index = ChunkIndex(0);
         self.position_to_index.insert(position, index);
-        self.update_neighbour_meshes(position);
-    }
-
-    pub fn add_mesh(&mut self, position: ChunkPosition, mesh: ChunkMesh) {
-        self.position_to_mesh.insert(position, mesh);
+        self.request_neighbour_mesh_updates(position);
     }
 
     pub fn iter_chunk_meshes(&self) -> impl Iterator<Item = (&ChunkPosition, &ChunkMesh)> {
@@ -150,30 +171,96 @@ impl World {
         })
     }
 
-    fn update_neighbour_meshes(&mut self, position: ChunkPosition) {
-        self.update_mesh(position.plus(IVec3::X));
-        self.update_mesh(position.plus(IVec3::NEG_X));
-        self.update_mesh(position.plus(IVec3::Y));
-        self.update_mesh(position.plus(IVec3::NEG_Y));
-        self.update_mesh(position.plus(IVec3::Z));
-        self.update_mesh(position.plus(IVec3::NEG_Z));
+    fn request_neighbour_mesh_updates(&mut self, position: ChunkPosition) {
+        self.request_mesh_update(position.plus(IVec3::X));
+        self.request_mesh_update(position.plus(IVec3::NEG_X));
+        self.request_mesh_update(position.plus(IVec3::Y));
+        self.request_mesh_update(position.plus(IVec3::NEG_Y));
+        self.request_mesh_update(position.plus(IVec3::Z));
+        self.request_mesh_update(position.plus(IVec3::NEG_Z));
     }
 
-    fn update_mesh(&mut self, position: ChunkPosition) {
-        if self
-            .get_chunk(position)
-            .map(|it| it.has_valid_mesh)
-            .unwrap_or(false)
-        {
-            return;
+    fn request_mesh_update(&mut self, position: ChunkPosition) {
+        if let Some(chunk) = self.get_chunk_mut(position) {
+            if !chunk.in_mesh_queue {
+                chunk.in_mesh_queue = true;
+                self.mesh_queue.push_back(position);
+            }
         }
-        let neighbours = self.neighbours(position);
-        if neighbours.is_none() {
-            return;
+    }
+
+    pub fn find_nearest_block_on_ray(
+        &self,
+        start_chunk: ChunkPosition,
+        offset: Vec3,
+        direction: Vec3,
+        max_distance: usize,
+    ) -> (Option<BlockPosition>, Option<BlockPosition>) {
+        let direction = direction.normalize();
+
+        // TODO properly intersect with the faces of neighbouring cubes and handle edges/corners
+        let divisor = 100;
+        let mut previous = None;
+
+        for i in 0..max_distance * divisor {
+            let distance = offset + i as f32 * direction * (1.0 / divisor as f32);
+
+            let position = start_chunk.block().plus(distance.floor().as_ivec3());
+            if Some(position) == previous {
+                continue;
+            }
+
+            if let Some(chunk) = self.get_chunk(position.chunk()) {
+                let relative = position.index() - position.chunk().block().index();
+                if !chunk.blocks[relative.x as usize][relative.y as usize][relative.z as usize]
+                    .transparent()
+                {
+                    return (previous, Some(position));
+                }
+            }
+
+            previous = Some(position);
         }
-        let chunk = self.get_chunk_mut(position).unwrap();
-        chunk.has_valid_mesh = true;
-        self.mesh_queue.push_back(position);
+        (None, None)
+    }
+
+    pub fn set_block(&mut self, position: BlockPosition, block: Block) -> Option<Block> {
+        info!("set_block {position:?} {block:?}");
+        if let Some(chunk) = self.get_chunk_mut(position.chunk()) {
+            let relative = position.index() - position.chunk().block().index();
+
+            let previous = mem::replace(
+                &mut chunk.blocks[relative.x as usize][relative.y as usize][relative.z as usize],
+                block,
+            );
+
+            if previous != block {
+                if let Block::Air = previous {
+                    chunk.non_air_block_count += 1;
+                }
+                if let Block::Air = block {
+                    chunk.non_air_block_count -= 1;
+                }
+                let cs = Chunk::SIZE as i32;
+                if relative.x == 0
+                    || relative.y == 0
+                    || relative.z == 0
+                    || relative.x == cs
+                    || relative.y == cs
+                    || relative.z == cs
+                {
+                    chunk.compute_transparency();
+                }
+
+                self.request_mesh_update(position.plus(IVec3::X).chunk());
+                self.request_mesh_update(position.plus(IVec3::NEG_X).chunk());
+                self.request_mesh_update(position.plus(IVec3::Y).chunk());
+                self.request_mesh_update(position.plus(IVec3::NEG_Y).chunk());
+                self.request_mesh_update(position.plus(IVec3::Z).chunk());
+                self.request_mesh_update(position.plus(IVec3::NEG_Z).chunk());
+            }
+        }
+        None
     }
 }
 

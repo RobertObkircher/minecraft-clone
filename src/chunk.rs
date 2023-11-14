@@ -1,7 +1,7 @@
 pub struct Chunk {
     pub blocks: [[[Block; Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE],
     pub transparency: u8,
-    pub has_valid_mesh: bool,
+    pub in_mesh_queue: bool,
     pub non_air_block_count: u16,
 }
 
@@ -62,13 +62,13 @@ impl Default for Chunk {
         Self {
             blocks: Default::default(),
             transparency: 0,
-            has_valid_mesh: false,
+            in_mesh_queue: false,
             non_air_block_count: 0,
         }
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default, Eq, PartialEq, Copy, Clone)]
 pub enum Block {
     #[default]
     Air,

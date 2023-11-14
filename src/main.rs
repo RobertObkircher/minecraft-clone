@@ -28,7 +28,7 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, Window, WindowBuilder};
 
 use crate::camera::Camera;
-use crate::chunk::Chunk;
+use crate::chunk::{Block, Chunk};
 use crate::mesh::ChunkMesh;
 use crate::position::{BlockPosition, ChunkPosition};
 use crate::statistics::{FrameInfo, Statistics};
@@ -306,8 +306,8 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             return;
                         };
 
-                        world.generate_chunks(&mut terrain, &mut statistics);
-                        world.generate_meshes(&device, &chunk_bind_group_layout, &mut statistics);
+                        world.generate_chunks(&mut terrain, &mut statistics, player_chunk);
+                        world.update_meshes(&device, &queue, &chunk_bind_group_layout, &mut statistics);
 
                         let frame = surface
                             .get_current_texture()
@@ -397,6 +397,21 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                         // TODO winit bug? changing cursor grab mode here didn't work
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
+                        let max_distance = 20;
+                        if is_locked && state == ElementState::Pressed && button == MouseButton::Left {
+                            let vs = camera.computed_vectors();
+                            if let (_, Some(position)) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, max_distance) {
+                                world.set_block(position, Block::Air);
+                            }
+
+                        }
+                        if is_locked && state == ElementState::Pressed && button == MouseButton::Right {
+                            let vs = camera.computed_vectors();
+                            if let (Some(position), _) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, max_distance) {
+                                world.set_block(position, Block::Dirt);
+                            }
+                        }
+
                         // TODO account for device_id
                         if !is_locked && state == ElementState::Pressed && (button == MouseButton::Left || button == MouseButton::Right) {
                             info!("Locking cursor");

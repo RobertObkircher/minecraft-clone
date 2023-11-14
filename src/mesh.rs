@@ -6,7 +6,7 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingType, Buffer, BufferAddress, BufferBindingType, BufferSize,
-    BufferUsages, Device, ShaderStages, VertexAttribute, VertexBufferLayout, VertexFormat,
+    BufferUsages, Device, Queue, ShaderStages, VertexAttribute, VertexBufferLayout, VertexFormat,
     VertexStepMode,
 };
 
@@ -33,7 +33,7 @@ struct Vertex {
 
 impl ChunkMesh {
     #[rustfmt::skip]
-    pub fn generate(device: &Device, position: ChunkPosition, chunk: &Chunk, neighbours: ChunkNeighbours, bind_group_layout: &BindGroupLayout) -> (ChunkMesh, ChunkMeshInfo) {
+    pub fn generate(device: &Device, position: ChunkPosition, chunk: &Chunk, neighbours: ChunkNeighbours, bind_group_layout: &BindGroupLayout, recycle_mesh: Option<(ChunkMesh, &Queue)>) -> (ChunkMesh, ChunkMeshInfo) {
         let start = Instant::now();
 
         let mut vertices = vec![];
@@ -122,34 +122,55 @@ impl ChunkMesh {
         make_face((0, 0, E), (1, 1, S), 4, neighbours.pos_z, Transparency::NegZ);
         make_face((0, 0, 0), (1, 1, S), 5, neighbours.neg_z, Transparency::PosZ);
 
+        let vertex_bytes: &[u8] = bytemuck::cast_slice(&vertices);
+        let index_bytes: &[u8] = bytemuck::cast_slice(&indices);
+        let uniform_data = position.block().index();
+        let uniform_bytes: &[u8] = bytemuck::cast_slice(uniform_data.as_ref());
 
-        let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
+        let (vertex_buffer, index_buffer, uniform_buffer, bind_group) = if let Some((recycle_mesh, queue)) = recycle_mesh {
+            let vertex_buffer = Some(recycle_mesh.vertex_buffer)
+                .filter(|it| it.size() >= vertex_bytes.len() as u64);
+            vertex_buffer.iter().for_each(|it| queue.write_buffer(&it, 0, vertex_bytes));
+
+            let index_buffer = Some(recycle_mesh.index_buffer)
+                .filter(|it| it.size() >= index_bytes.len() as u64);
+            index_buffer.iter().for_each(|it| queue.write_buffer(&it, 0, index_bytes));
+
+            let uniform_buffer = recycle_mesh.uniform_buffer;
+            queue.write_buffer(&uniform_buffer, 0, uniform_bytes);
+
+            (vertex_buffer, index_buffer, uniform_buffer, recycle_mesh.bind_group)
+        } else {
+            let uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
+                label: Some("Chunk Uniform Buffer"),
+                contents: bytemuck::cast_slice(position.block().index().as_ref()),
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            });
+
+            let bind_group = device.create_bind_group(&BindGroupDescriptor {
+                layout: &bind_group_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    }
+                ],
+                label: None,
+            });
+            (None, None, uniform_buffer, bind_group)
+        };
+
+        let vertex_buffer = vertex_buffer.unwrap_or_else(|| device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Chunk Vertex Buffer"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: BufferUsages::VERTEX,
-        });
-        let index_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            contents: vertex_bytes,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+        }));
+
+        let index_buffer = index_buffer.unwrap_or_else(|| device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Chunk Index Buffer"),
-            contents: bytemuck::cast_slice(&indices),
-            usage: BufferUsages::INDEX,
-        });
-
-        let uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Some("Chunk Uniform Buffer"),
-            contents: bytemuck::cast_slice(position.block().index().as_ref()),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-        });
-
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
-            layout: &bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }
-            ],
-            label: None,
-        });
+            contents: index_bytes,
+            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+        }));
 
         (Self {
             vertex_buffer,
