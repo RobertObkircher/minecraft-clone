@@ -265,9 +265,11 @@ impl World {
 
             if previous != block {
                 if let Block::Air = previous {
+                    assert!(chunk.non_air_block_count < Chunk::MAX_BLOCK_COUNT);
                     chunk.non_air_block_count += 1;
                 }
                 if let Block::Air = block {
+                    assert!(chunk.non_air_block_count > 0);
                     chunk.non_air_block_count -= 1;
                 }
                 let cs = Chunk::SIZE as i32;
