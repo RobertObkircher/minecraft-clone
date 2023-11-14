@@ -272,13 +272,13 @@ impl World {
                     assert!(chunk.non_air_block_count > 0);
                     chunk.non_air_block_count -= 1;
                 }
-                let cs = Chunk::SIZE as i32;
+                let last = Chunk::SIZE as i32 - 1;
                 if relative.x == 0
                     || relative.y == 0
                     || relative.z == 0
-                    || relative.x == cs
-                    || relative.y == cs
-                    || relative.z == cs
+                    || relative.x == last
+                    || relative.y == last
+                    || relative.z == last
                 {
                     chunk.compute_transparency();
                 }
