@@ -92,6 +92,7 @@ impl World {
         while let Some(position) = self.mesh_queue.pop_front() {
             self.get_chunk_mut(position).unwrap().in_mesh_queue = false;
             let previous_mesh = self.position_to_mesh.remove(&position);
+            statistics.replaced_meshes += previous_mesh.is_some() as usize;
 
             let chunk = self.get_chunk(position).unwrap();
             if chunk.non_air_block_count == 0 {

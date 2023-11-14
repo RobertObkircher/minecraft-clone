@@ -12,6 +12,9 @@ pub struct Statistics {
     pub total_chunk_mesh_time: Duration,
     pub full_invisible_chunks: usize,
     pub air_chunks: usize,
+    pub replaced_meshes: usize,
+    pub recycled_index_buffers: usize,
+    pub recycled_vertex_buffers: usize,
 }
 
 pub struct FrameInfo {
@@ -30,6 +33,8 @@ pub struct ChunkInfo {
 pub struct ChunkMeshInfo {
     pub time: Duration,
     pub face_count: usize,
+    pub recycled_index_buffer: bool,
+    pub recycled_vertex_buffer: bool,
 }
 
 impl Statistics {
@@ -42,6 +47,9 @@ impl Statistics {
             total_chunk_mesh_time: Duration::ZERO,
             full_invisible_chunks: 0,
             air_chunks: 0,
+            replaced_meshes: 0,
+            recycled_index_buffers: 0,
+            recycled_vertex_buffers: 0,
         }
     }
 
@@ -52,6 +60,8 @@ impl Statistics {
 
     pub fn chunk_mesh_generated(&mut self, info: ChunkMeshInfo) {
         self.total_chunk_mesh_time += info.time;
+        self.recycled_vertex_buffers += info.recycled_vertex_buffer as usize;
+        self.recycled_index_buffers += info.recycled_index_buffer as usize;
         self.chunk_mesh_infos.push(info);
     }
 
@@ -154,8 +164,13 @@ impl Statistics {
             }
             writeln!(
                 w,
-                "    full but invisible: {}, air: {}",
-                self.full_invisible_chunks, self.air_chunks
+                "    invisible: {} air, {} underground",
+                self.air_chunks, self.full_invisible_chunks,
+            )?;
+            writeln!(
+                w,
+                "    recycled: {} vertex buffers, {} index buffers from {} replaced meshes",
+                self.recycled_vertex_buffers, self.recycled_index_buffers, self.replaced_meshes
             )?;
         }
 

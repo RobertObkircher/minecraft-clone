@@ -160,12 +160,14 @@ impl ChunkMesh {
             (None, None, uniform_buffer, bind_group)
         };
 
+        let recycled_vertex_buffer = vertex_buffer.is_some();
         let vertex_buffer = vertex_buffer.unwrap_or_else(|| device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Chunk Vertex Buffer"),
             contents: vertex_bytes,
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
         }));
 
+        let recycled_index_buffer = index_buffer.is_some();
         let index_buffer = index_buffer.unwrap_or_else(|| device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Chunk Index Buffer"),
             contents: index_bytes,
@@ -181,6 +183,8 @@ impl ChunkMesh {
         }, ChunkMeshInfo {
             time: start.elapsed(),
             face_count: indices.len() / 6,
+            recycled_index_buffer,
+            recycled_vertex_buffer,
         })
     }
 
