@@ -1,3 +1,4 @@
+#[derive(Clone)]
 pub struct Chunk {
     pub blocks: [[[Block; Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE],
     pub transparency: u8,

@@ -2,7 +2,6 @@ use std::collections::{HashMap, VecDeque};
 use std::mem;
 
 use glam::{IVec3, Vec3};
-use log::info;
 use wgpu::{BindGroupLayout, Device, Queue};
 
 use crate::chunk::{Block, Chunk, Transparency};
@@ -106,7 +105,7 @@ impl World {
         statistics: &mut Statistics,
     ) {
         while let Some(position) = self.mesh_queue.pop_front() {
-            self.get_chunk_mut(position).unwrap().in_mesh_queue = false;
+            self.get_chunk_mut(position, false).unwrap().in_mesh_queue = false;
             let previous_mesh = self.position_to_mesh.remove(&position);
             statistics.replaced_meshes += previous_mesh.is_some() as usize;
 
@@ -171,10 +170,24 @@ impl World {
             .map(|it| &self.chunks[it.0 as usize])
     }
 
-    pub fn get_chunk_mut(&mut self, position: ChunkPosition) -> Option<&mut Chunk> {
+    pub fn get_chunk_mut(
+        &mut self,
+        position: ChunkPosition,
+        clone_air: bool,
+    ) -> Option<&mut Chunk> {
         self.position_to_index
             .get(&position)
-            .map(|it| &mut self.chunks[it.0 as usize])
+            .cloned()
+            .filter(|it| clone_air || it.0 != 0)
+            .map(|mut it| {
+                if it.0 == 0 {
+                    let air = self.chunks[0].clone();
+                    it = ChunkIndex(self.chunks.len().try_into().unwrap());
+                    self.chunks.push(air);
+                    self.position_to_index.insert(position, it);
+                }
+                &mut self.chunks[it.0 as usize]
+            })
     }
 
     pub fn neighbours(&self, position: ChunkPosition) -> Option<ChunkNeighbours> {
@@ -198,7 +211,7 @@ impl World {
     }
 
     fn request_mesh_update(&mut self, position: ChunkPosition) {
-        if let Some(chunk) = self.get_chunk_mut(position) {
+        if let Some(chunk) = self.get_chunk_mut(position, false) {
             if !chunk.in_mesh_queue {
                 chunk.in_mesh_queue = true;
                 self.mesh_queue.push_back(position);
@@ -242,7 +255,7 @@ impl World {
     }
 
     pub fn set_block(&mut self, position: BlockPosition, block: Block) -> Option<Block> {
-        if let Some(chunk) = self.get_chunk_mut(position.chunk()) {
+        if let Some(chunk) = self.get_chunk_mut(position.chunk(), !matches!(block, Block::Air)) {
             let relative = position.index() - position.chunk().block().index();
 
             let previous = mem::replace(
@@ -275,8 +288,13 @@ impl World {
                 self.request_mesh_update(position.plus(IVec3::Z).chunk());
                 self.request_mesh_update(position.plus(IVec3::NEG_Z).chunk());
             }
+            return Some(previous);
         }
-        None
+        if !matches!(block, Block::Air) && self.get_chunk(position.chunk()).is_some() {
+            Some(Block::Air)
+        } else {
+            None
+        }
     }
 }
 
