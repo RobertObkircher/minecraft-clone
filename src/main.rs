@@ -437,7 +437,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 "a" => camera.position -= vectors.right * speed,
                                 "s" => camera.position -= vectors.direction * speed,
                                 "d" => camera.position += vectors.right * speed,
-                                "p" => print_statistics = event.state.is_pressed(),
+                                "p" => if event.state.is_pressed() {
+                                    print_statistics ^= true;
+                                },
                                 _ => {}
                             }
                         }
