@@ -94,7 +94,7 @@ impl ChunkMesh {
             }
         }
 
-        let mut make_face = |offset: (usize, usize, usize), step: (usize, usize, usize), face_index: u32, neighbour: &Chunk, transparency: Transparency| {
+        let mut make_chunk_face = |offset: (usize, usize, usize), step: (usize, usize, usize), face_index: u32, neighbour: &Chunk, transparency: Transparency| {
             if neighbour.get_transparency(transparency) {
                 for x in (offset.0..S).step_by(step.0) {
                     for y in (offset.1..S).step_by(step.1) {
@@ -113,14 +113,14 @@ impl ChunkMesh {
             };
         };
 
-        make_face((E, 0, 0), (S, 1, 1), 0, neighbours.pos_x, Transparency::NegX);
-        make_face((0, 0, 0), (S, 1, 1), 1, neighbours.neg_x, Transparency::PosX);
+        make_chunk_face((E, 0, 0), (S, 1, 1), 0, neighbours.pos_x, Transparency::NegX);
+        make_chunk_face((0, 0, 0), (S, 1, 1), 1, neighbours.neg_x, Transparency::PosX);
 
-        make_face((0, E, 0), (1, S, 1), 2, neighbours.pos_y, Transparency::NegY);
-        make_face((0, 0, 0), (1, S, 1), 3, neighbours.neg_y, Transparency::PosY);
+        make_chunk_face((0, E, 0), (1, S, 1), 2, neighbours.pos_y, Transparency::NegY);
+        make_chunk_face((0, 0, 0), (1, S, 1), 3, neighbours.neg_y, Transparency::PosY);
 
-        make_face((0, 0, E), (1, 1, S), 4, neighbours.pos_z, Transparency::NegZ);
-        make_face((0, 0, 0), (1, 1, S), 5, neighbours.neg_z, Transparency::PosZ);
+        make_chunk_face((0, 0, E), (1, 1, S), 4, neighbours.pos_z, Transparency::NegZ);
+        make_chunk_face((0, 0, 0), (1, 1, S), 5, neighbours.neg_z, Transparency::PosZ);
 
         let vertex_bytes: &[u8] = bytemuck::cast_slice(&vertices);
         let index_bytes: &[u8] = bytemuck::cast_slice(&indices);
