@@ -14,3 +14,5 @@ Controls:
 - `q` explosion
 - `e` anti-explosion
 - `p` toggle printing of statistics
+
+![Screenshot](screenshot.png)
