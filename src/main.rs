@@ -268,6 +268,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
     let mut start = Instant::now();
 
     let mut is_locked = false;
+    let mut print_statistics = false;
     event_loop.run(move |event, target| {
         let id = window.id();
         match event {
@@ -388,7 +389,9 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                             chunk_mesh_info_count: statistics.chunk_mesh_infos.len(),
                         });
 
-                        statistics.print_last_frame(&mut io::stdout().lock()).unwrap();
+                        if print_statistics {
+                            statistics.print_last_frame(&mut io::stdout().lock()).unwrap();
+                        }
                     }
                     WindowEvent::Focused(_) => {
                         // TODO winit bug? changing cursor grab mode here didn't work
@@ -419,6 +422,7 @@ async fn run(event_loop: EventLoop<()>, window: Window) {
                                 "a" => camera.position -= vectors.right * speed,
                                 "s" => camera.position -= vectors.direction * speed,
                                 "d" => camera.position += vectors.right * speed,
+                                "p" => print_statistics = event.state.is_pressed(),
                                 _ => {}
                             }
                         }
