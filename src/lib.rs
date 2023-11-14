@@ -7,7 +7,6 @@ use std::time::{Duration, Instant};
 
 use glam::{IVec3, Mat4, Vec3};
 use log::info;
-use pollster;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
@@ -25,7 +24,7 @@ use wgpu::{
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{CursorGrabMode, Window, WindowBuilder};
+use winit::window::{CursorGrabMode, WindowBuilder};
 
 use crate::camera::Camera;
 use crate::chunk::{Block, Chunk};
@@ -47,21 +46,6 @@ mod statistics;
 mod terrain;
 mod texture;
 mod world;
-
-fn main() {
-    env_logger::init();
-    info!("Hello, world!");
-
-    let event_loop = EventLoop::new().unwrap();
-
-    let window = WindowBuilder::new()
-        .with_title("Hello, world!")
-        .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0))
-        .build(&event_loop)
-        .unwrap();
-
-    pollster::block_on(run(event_loop, window));
-}
 
 fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
     let fov_y_radians = PI / 4.0;
@@ -98,7 +82,18 @@ pub fn create_depth_texture(
     (texture, depth_view)
 }
 
-async fn run(event_loop: EventLoop<()>, window: Window) {
+pub async fn run() {
+    env_logger::init();
+    info!("Hello, world!");
+
+    let event_loop = EventLoop::new().unwrap();
+
+    let window = WindowBuilder::new()
+        .with_title("Hello, world!")
+        .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0))
+        .build(&event_loop)
+        .unwrap();
+
     let mut statistics = Statistics::new();
 
     let instance = Instance::default();
