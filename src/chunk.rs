@@ -21,14 +21,16 @@ impl Chunk {
 
     pub const MAX_BLOCK_COUNT: u16 = Chunk::SIZE.pow(3) as u16;
 
-    pub fn clear_transparency(&mut self) {
-        self.transparency = 0;
-    }
     pub fn get_transparency(&self, direction: Transparency) -> bool {
         (self.transparency & (1 << (direction as u8))) != 0
     }
 
     pub fn compute_transparency(&mut self) {
+        if self.non_air_block_count == Chunk::MAX_BLOCK_COUNT {
+            self.transparency = !0u8;
+            return;
+        }
+
         let mut transparency = 1 << (Transparency::Computed as u8);
 
         let s = Chunk::SIZE;

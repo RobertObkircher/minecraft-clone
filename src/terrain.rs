@@ -121,9 +121,8 @@ impl TerrainGenerator {
             );
         }
 
-        result.clear_transparency();
-        result.compute_transparency();
         result.non_air_block_count = non_air_block_count;
+        result.compute_transparency();
 
         (
             Some(result),
