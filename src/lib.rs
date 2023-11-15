@@ -1,12 +1,11 @@
 extern crate core;
 
+use glam::{IVec3, Mat4, Vec3};
+use log::info;
 use std::borrow::Cow;
 use std::f32::consts::{PI, TAU};
 use std::io;
-use std::time::{Duration, Instant};
-
-use glam::{IVec3, Mat4, Vec3};
-use log::info;
+use std::time::Duration;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
@@ -34,6 +33,7 @@ use crate::position::{BlockPosition, ChunkPosition};
 use crate::statistics::{FrameInfo, Statistics};
 use crate::terrain::{TerrainGenerator, WorldSeed};
 use crate::texture::BlockTexture;
+use crate::timer::Timer;
 use crate::world::World;
 
 mod camera;
@@ -46,6 +46,7 @@ mod reload;
 mod statistics;
 mod terrain;
 mod texture;
+mod timer;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 mod world;
@@ -85,6 +86,9 @@ pub fn create_depth_texture(
     (texture, depth_view)
 }
 
+/// wgpu wants this to be non-zero and chromium 4x4
+const MIN_SURFACE_SIZE: u32 = 4;
+
 pub async fn run() {
     info!("Hello, world!");
 
@@ -94,7 +98,6 @@ pub async fn run() {
         .with_title("Hello, world!")
         .build(&event_loop)
         .unwrap();
-
     #[cfg(target_arch = "wasm32")]
     wasm::setup_window(&window);
 
@@ -140,8 +143,8 @@ pub async fn run() {
     let mut config = SurfaceConfiguration {
         usage: TextureUsages::RENDER_ATTACHMENT,
         format: swapchain_format,
-        width: size.width.max(1),
-        height: size.height.max(1),
+        width: size.width.max(MIN_SURFACE_SIZE),
+        height: size.height.max(MIN_SURFACE_SIZE),
         present_mode: PresentMode::Fifo,
         alpha_mode: swapchain_capabilities.alpha_modes[0],
         view_formats: vec![],
@@ -168,7 +171,7 @@ pub async fn run() {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: BufferSize::new(12),
+                    min_binding_size: BufferSize::new(16), // Actually 12, but that isn't supported by webgl
                 },
                 count: None,
             },
@@ -213,7 +216,7 @@ pub async fn run() {
     let mut player_chunk = ChunkPosition::from_chunk_index(IVec3::ZERO);
     let player_chunk_uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
         label: Some("Uniform Buffer"),
-        contents: bytemuck::cast_slice(player_chunk.block().index().as_ref()),
+        contents: bytemuck::cast_slice(player_chunk.block().index().extend(0).as_ref()),
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
     });
 
@@ -267,7 +270,7 @@ pub async fn run() {
     let mut world = World::new(12, 16);
     let mut terrain = TerrainGenerator::new(WorldSeed(42));
 
-    let mut start = Instant::now();
+    let mut start = Timer::now();
 
     let mut is_locked = false;
     let mut print_statistics = false;
@@ -277,8 +280,8 @@ pub async fn run() {
             Event::WindowEvent { event, window_id } if window_id == id => {
                 match event {
                     WindowEvent::Resized(new_size) => {
-                        config.width = new_size.width.max(1);
-                        config.height = new_size.height.max(1);
+                        config.width = new_size.width.max(MIN_SURFACE_SIZE);
+                        config.height = new_size.height.max(MIN_SURFACE_SIZE);
                         surface.configure(&device, &config);
                         depth = create_depth_texture(&device, &config);
 
@@ -326,7 +329,7 @@ pub async fn run() {
                         if chunk_offset != IVec3::ZERO {
                             player_chunk = player_chunk.plus(chunk_offset);
                             camera.position -= (chunk_offset * Chunk::SIZE as i32).as_vec3();
-                            queue.write_buffer(&player_chunk_uniform_buffer, 0, &bytemuck::cast_slice(player_chunk.block().index().as_ref()));
+                            queue.write_buffer(&player_chunk_uniform_buffer, 0, &bytemuck::cast_slice(player_chunk.block().index().extend(0).as_ref()));
                         }
                         // must happen after the player chunk uniform update to avoid one invalid frame
                         let projection_view_matrix = generate_matrix(config.width as f32 / config.height as f32, &camera);

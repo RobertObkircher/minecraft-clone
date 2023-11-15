@@ -5,11 +5,11 @@ struct VertexOutput {
 };
 
 @group(0) @binding(0) var<uniform> transform: mat4x4<f32>;
-@group(0) @binding(1) var<uniform> player_chunk: vec3<i32>;
+@group(0) @binding(1) var<uniform> player_chunk: vec4<i32>; // vec3, but webgl doesn't support that
 @group(0) @binding(2) var t_diffuse: texture_2d<f32>;
 @group(0) @binding(3) var s_diffuse: sampler;
 
-@group(1) @binding(0) var<uniform> chunk_position: vec3<i32>;
+@group(1) @binding(0) var<uniform> chunk_position: vec4<i32>; // vec3, but webgl doesn't support that
 
 @vertex
 fn vs_main(
@@ -22,7 +22,7 @@ fn vs_main(
     result.normal = normal(face_index);
 
     // this allows vertices to be relative to their chunk to avoid precision issues for large coordinates
-    var offset = vec4<i32>(chunk_position - player_chunk, 0);
+    var offset = vec4<i32>(chunk_position.xyz - player_chunk.xyz, 0);
 
     result.position = transform * (position + vec4<f32>(offset));
     return result;

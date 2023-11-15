@@ -1,7 +1,7 @@
-use std::time::{Duration, Instant};
-use std::{io, mem};
-
+use crate::timer::Timer;
 use glam::Vec3;
+use std::time::Duration;
+use std::{io, mem};
 
 /// TODO bound memory usage? if we collect 100 bytes per frame at 60 fps that is only 21.6MB per hour. An easy optimization would be to replace 12 byte Durations with 4 byte f32
 pub struct Statistics {
@@ -70,7 +70,7 @@ impl Statistics {
     }
 
     pub fn print_last_frame(&self, w: &mut dyn io::Write) -> io::Result<()> {
-        let start = Instant::now();
+        let start = Timer::now();
         let frame = self.frame_infos.last().unwrap();
 
         writeln!(w)?;

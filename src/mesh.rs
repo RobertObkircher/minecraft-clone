@@ -1,7 +1,10 @@
-use std::mem;
-use std::time::Instant;
-
+use crate::chunk::{Block, Chunk, Transparency};
+use crate::position::ChunkPosition;
+use crate::statistics::ChunkMeshInfo;
+use crate::timer::Timer;
+use crate::world::ChunkNeighbours;
 use bytemuck::{Pod, Zeroable};
+use std::mem;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
@@ -9,11 +12,6 @@ use wgpu::{
     BufferUsages, Device, Queue, ShaderStages, VertexAttribute, VertexBufferLayout, VertexFormat,
     VertexStepMode,
 };
-
-use crate::chunk::{Block, Chunk, Transparency};
-use crate::position::ChunkPosition;
-use crate::statistics::ChunkMeshInfo;
-use crate::world::ChunkNeighbours;
 
 pub struct ChunkMesh {
     pub vertex_buffer: Buffer,
@@ -34,7 +32,7 @@ struct Vertex {
 impl ChunkMesh {
     #[rustfmt::skip]
     pub fn generate(device: &Device, position: ChunkPosition, chunk: &Chunk, neighbours: ChunkNeighbours, bind_group_layout: &BindGroupLayout, recycle_mesh: Option<(ChunkMesh, &Queue)>) -> (ChunkMesh, ChunkMeshInfo) {
-        let start = Instant::now();
+        let start = Timer::now();
 
         let mut vertices = vec![];
         let mut indices: Vec<u16> = vec![];
@@ -132,7 +130,7 @@ impl ChunkMesh {
 
         let vertex_bytes: &[u8] = bytemuck::cast_slice(&vertices);
         let index_bytes: &[u8] = bytemuck::cast_slice(&indices);
-        let uniform_data = position.block().index();
+        let uniform_data = position.block().index().extend(0);
         let uniform_bytes: &[u8] = bytemuck::cast_slice(uniform_data.as_ref());
 
         let (vertex_buffer, index_buffer, uniform_buffer, bind_group) = if let Some((recycle_mesh, queue)) = recycle_mesh {
@@ -151,7 +149,7 @@ impl ChunkMesh {
         } else {
             let uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
                 label: Some("Chunk Uniform Buffer"),
-                contents: bytemuck::cast_slice(position.block().index().as_ref()),
+                contents: uniform_bytes,
                 usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             });
 
@@ -227,7 +225,7 @@ impl ChunkMesh {
                 ty: BindingType::Buffer {
                     ty: BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: BufferSize::new(12),
+                    min_binding_size: BufferSize::new(16), // actually 12, but that isn't supported by webgl
                 },
                 count: None,
             }],

@@ -1,16 +1,14 @@
-use std::time::Instant;
-
-use glam::IVec3;
-use rand::rngs::StdRng;
-use rand::SeedableRng;
-
 use crate::chunk::{Block, Chunk};
 use crate::noise::ImprovedNoise;
 use crate::position::ChunkPosition;
 use crate::statistics::ChunkInfo;
+use crate::timer::Timer;
+use glam::IVec3;
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 #[derive(Copy, Clone, Debug)]
-pub struct WorldSeed(pub usize);
+pub struct WorldSeed(pub u64);
 
 #[derive(Copy, Clone, Debug)]
 enum Usage {
@@ -71,7 +69,7 @@ impl TerrainGenerator {
     }
 
     pub fn fill_chunk(&mut self, position: ChunkPosition) -> (Option<Chunk>, ChunkInfo) {
-        let start = Instant::now();
+        let start = Timer::now();
         let mut result = Chunk::default();
 
         let mut random = random(position, self.world_seed, Usage::FillChunk);

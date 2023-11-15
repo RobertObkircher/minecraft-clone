@@ -23,4 +23,4 @@ rand = "0.8.5"
 wgpu = { version = "0.18.0", features = ["webgl"]}
 wasm-bindgen = "0.2.88"
 wasm-bindgen-futures = "0.4.38"
-web-sys = { version = "0.3", features = ["console", "Element"]}
+web-sys = { version = "0.3", features = ["console", "Element", "Performance"]}
