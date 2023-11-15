@@ -73,7 +73,6 @@ impl Statistics {
         let start = Timer::now();
         let frame = self.frame_infos.last().unwrap();
 
-        writeln!(w)?;
         writeln!(w, "Frame: {}", self.frame_infos.len())?;
 
         let last_10: Duration = self

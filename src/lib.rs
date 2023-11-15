@@ -95,13 +95,12 @@ pub async fn run() {
 
     let window = WindowBuilder::new()
         .with_title("Hello, world!")
+        .with_inner_size(LogicalSize::new(800.0, 600.0)) // doesn't affect wasm canvas
         .build(&event_loop)
         .unwrap();
+
     #[cfg(target_arch = "wasm32")]
     wasm::setup_window(&window);
-
-    // .with_inner_size() in the builder didn't work for wasm32
-    let _ = window.request_inner_size(LogicalSize::new(800.0, 600.0));
 
     let mut statistics = Statistics::new();
 
@@ -397,7 +396,10 @@ pub async fn run() {
                             #[cfg(target_arch = "wasm32")]
                             wasm::display_statistics(&statistics);
                             #[cfg(not(target_arch = "wasm32"))]
-                            statistics.print_last_frame(&mut std::io::stdout().lock()).unwrap();
+                            {
+                                println!();
+                                statistics.print_last_frame(&mut std::io::stdout().lock()).unwrap();
+                            }
                         }
                     }
                     WindowEvent::Focused(_) => {
@@ -447,6 +449,10 @@ pub async fn run() {
                                 "d" => camera.position += vectors.right * speed,
                                 "p" => if event.state.is_pressed() {
                                     print_statistics ^= true;
+                                    #[cfg(target_arch = "wasm32")]
+                                    if !print_statistics {
+                                        wasm::hide_statistics();
+                                    }
                                 },
                                 "q" => if event.state.is_pressed() {                    
                                     let vs = camera.computed_vectors();

@@ -4,10 +4,48 @@
     <meta charset="UTF-8">
     <title>Minecraft clone!</title>
     <meta name="viewport" content="width=device-width, initial-scale=1"/>
-
+    <style>
+        #statistics {
+            position: absolute;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.3);
+            padding: 1em;
+            margin: 1em;
+        }
+        #statistics:empty {
+            display: none;
+        }
+        @media (max-width: 700px){
+            #statistics, #controls {
+                font-size: 50%;
+            }
+        }
+        kbd {
+            border-radius: 2px;
+            padding: 1px;
+            border: 1px solid black;
+        }
+        canvas {
+            margin-top: 2px;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+        }
+    </style>
 </head>
 <body>
-Code and controls are available on <a href="https://github.com/RobertObkircher/minecraft-clone">GitHub</a>!<br>
+The code is available on <a href="https://github.com/RobertObkircher/minecraft-clone">GitHub</a>!<br>
+<div id="controls">
+    Controls:
+    <kbd>W</kbd>&nbsp;<kbd>A</kbd>&nbsp;<kbd>S</kbd>&nbsp;<kbd>D</kbd>&nbsp;movement,
+    <kbd>Left-Click</kbd>&nbsp;destroy&nbsp;block,
+    <kbd>Right-Click</kbd>&nbsp;place&nbsp;block,
+    <kbd>Q</kbd>&nbsp;explosion,
+    <kbd>E</kbd>&nbsp;anti-explosion,
+    <kbd>P</kbd>&nbsp;toggle statistics printing
+    <kbd>ESC</kbd> release captured mouse
+</div>
+<br>
+<pre id="statistics"></pre>
 <script type="module">
     import init from "./pkg/minecraft_clone.js";
 
