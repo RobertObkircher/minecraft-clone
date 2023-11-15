@@ -1,10 +1,12 @@
 extern crate core;
 
-use glam::{IVec3, Mat4, Vec3};
-use log::info;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
 use std::time::Duration;
+
+use glam::{IVec3, Mat4, Vec3};
+use log::info;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
     BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
@@ -20,7 +22,7 @@ use wgpu::{
     TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 use winit::dpi::LogicalSize;
-use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
+use winit::event::{DeviceEvent, ElementState, Event, MouseButton, Touch, TouchPhase, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, WindowBuilder};
@@ -270,6 +272,7 @@ pub async fn run() {
 
     let mut start = Timer::now();
 
+    let mut fingers = HashMap::new();
     let mut is_locked = false;
     let mut print_statistics = true;
     event_loop.run(move |event, target| {
@@ -438,6 +441,26 @@ pub async fn run() {
                                     is_locked = true;
                                 }
                                 Err(e) => todo!("Lock cursor manually with set_position for x11 and windows? {e}")
+                            }
+                        }
+                    }
+                    WindowEvent::Touch(Touch { device_id, phase, location, force: _, id }) => {
+                        let id = (device_id, id);
+                        match phase {
+                            TouchPhase::Started => {
+                                fingers.insert(id, location);
+                            }
+                            TouchPhase::Moved => {
+                                let old = fingers.insert(id, location).unwrap();
+                                let dx = location.x - old.x;
+                                let dy = location.y - old.y;
+
+                                let speed = delta_time * 0.1;
+                                camera.turn_right(-dx as f32 * speed);
+                                camera.turn_up(dy as f32 * speed);
+                            }
+                            TouchPhase::Ended | TouchPhase::Cancelled => {
+                                fingers.remove(&id).unwrap();
                             }
                         }
                     }
