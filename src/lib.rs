@@ -292,6 +292,14 @@ pub async fn run() {
                     WindowEvent::RedrawRequested => {
                         window.request_redraw();
 
+                        #[cfg(target_arch = "wasm32")]
+                        if is_locked && web_sys::window().unwrap().document().unwrap().pointer_lock_element().is_none() {
+                            // without this we would have to hit esc twice
+                            info!("Lost pointer grab");
+                            window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                            is_locked = false;
+                        }
+
                         #[cfg(feature = "reload")]
                         if let Some(changed) = render_pipeline_reloader.get_changed_content() {
                             render_pipeline = match reload::validate_shader(changed, &device.features(), &device.limits(), "shader.wgsl", &["vs_main", "fs_main"]) {
@@ -403,7 +411,7 @@ pub async fn run() {
                         }
                     }
                     WindowEvent::Focused(_) => {
-                        // TODO winit bug? changing cursor grab mode here didn't work
+                        // TODO winit bug? changing cursor grab mode here didn't work. the cursor gets stuck when reentering after alt-tab
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
                         if is_locked && state == ElementState::Pressed && button == MouseButton::Left {
