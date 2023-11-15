@@ -28,7 +28,8 @@ impl Timer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            Duration::from_secs_f64(Timer::now().value - self.value)
+            let millis = Timer::now().value - self.value;
+            Duration::from_secs_f64(millis / 1000.0)
         }
     }
 }
@@ -42,7 +43,7 @@ impl AddAssign<Duration> for Timer {
 
         #[cfg(target_arch = "wasm32")]
         {
-            self.value += rhs.as_secs_f64();
+            self.value += rhs.as_secs_f64() * 1000.0;
         }
     }
 }
