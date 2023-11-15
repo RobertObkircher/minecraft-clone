@@ -1,3 +1,4 @@
+use crate::statistics::Statistics;
 use log::{Level, Log, Metadata, Record};
 use std::panic::PanicInfo;
 use wasm_bindgen::prelude::*;
@@ -23,6 +24,22 @@ pub fn setup_window(winit_window: &Window) {
     let canvas = winit_window.canvas().unwrap();
     let canvas = Element::from(canvas);
     body.append_child(&canvas).unwrap();
+
+    let statistics = document.create_element("pre").unwrap();
+    statistics.set_id("statistics");
+    body.append_child(&statistics).unwrap();
+}
+
+pub fn display_statistics(statistics: &Statistics) {
+    let mut string = Vec::<u8>::new();
+    statistics.print_last_frame(&mut string).unwrap();
+    let element = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .get_element_by_id("statistics")
+        .unwrap();
+    element.set_text_content(Some(std::str::from_utf8(&string).unwrap()));
 }
 
 fn panic_hook(info: &PanicInfo) {

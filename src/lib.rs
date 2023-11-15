@@ -4,7 +4,6 @@ use glam::{IVec3, Mat4, Vec3};
 use log::info;
 use std::borrow::Cow;
 use std::f32::consts::{PI, TAU};
-use std::io;
 use std::time::Duration;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
@@ -273,7 +272,7 @@ pub async fn run() {
     let mut start = Timer::now();
 
     let mut is_locked = false;
-    let mut print_statistics = false;
+    let mut print_statistics = true;
     event_loop.run(move |event, target| {
         let id = window.id();
         match event {
@@ -395,7 +394,10 @@ pub async fn run() {
                         });
 
                         if print_statistics {
-                            statistics.print_last_frame(&mut io::stdout().lock()).unwrap();
+                            #[cfg(target_arch = "wasm32")]
+                            wasm::display_statistics(&statistics);
+                            #[cfg(not(target_arch = "wasm32"))]
+                            statistics.print_last_frame(&mut std::io::stdout().lock()).unwrap();
                         }
                     }
                     WindowEvent::Focused(_) => {
