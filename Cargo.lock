@@ -849,6 +849,9 @@ dependencies = [
  "log",
  "pollster",
  "rand",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "wgpu",
  "winit",
 ]

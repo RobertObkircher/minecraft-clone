@@ -4,6 +4,7 @@ To run:
 
 - `cargo run --release`
 - `cargo run --release --features reload` (to hot reload shader.wgsl)
+- `wasm-pack build --target web` to compile the web version in `./index.html`
 
 Controls:
 

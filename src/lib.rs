@@ -21,6 +21,7 @@ use wgpu::{
     TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
     TextureViewDescriptor, TextureViewDimension, VertexState,
 };
+use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoop;
 use winit::keyboard::{Key, NamedKey};
@@ -45,6 +46,8 @@ mod reload;
 mod statistics;
 mod terrain;
 mod texture;
+#[cfg(target_arch = "wasm32")]
+mod wasm;
 mod world;
 
 fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
@@ -83,16 +86,20 @@ pub fn create_depth_texture(
 }
 
 pub async fn run() {
-    env_logger::init();
     info!("Hello, world!");
 
     let event_loop = EventLoop::new().unwrap();
 
     let window = WindowBuilder::new()
         .with_title("Hello, world!")
-        .with_inner_size(winit::dpi::LogicalSize::new(800.0, 600.0))
         .build(&event_loop)
         .unwrap();
+
+    #[cfg(target_arch = "wasm32")]
+    wasm::setup_window(&window);
+
+    // .with_inner_size() in the builder didn't work for wasm32
+    let _ = window.request_inner_size(LogicalSize::new(800.0, 600.0));
 
     let mut statistics = Statistics::new();
 
@@ -133,8 +140,8 @@ pub async fn run() {
     let mut config = SurfaceConfiguration {
         usage: TextureUsages::RENDER_ATTACHMENT,
         format: swapchain_format,
-        width: size.width,
-        height: size.height,
+        width: size.width.max(1),
+        height: size.height.max(1),
         present_mode: PresentMode::Fifo,
         alpha_mode: swapchain_capabilities.alpha_modes[0],
         view_formats: vec![],
@@ -270,8 +277,8 @@ pub async fn run() {
             Event::WindowEvent { event, window_id } if window_id == id => {
                 match event {
                     WindowEvent::Resized(new_size) => {
-                        config.width = new_size.width;
-                        config.height = new_size.height;
+                        config.width = new_size.width.max(1);
+                        config.height = new_size.height.max(1);
                         surface.configure(&device, &config);
                         depth = create_depth_texture(&device, &config);
 
