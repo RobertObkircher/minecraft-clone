@@ -449,6 +449,23 @@ pub async fn run() {
                         match phase {
                             TouchPhase::Started => {
                                 fingers.insert(id, location);
+                                if fingers.len() == 2 {
+                                    let vs = camera.computed_vectors();
+                                    if let (_, Some(position)) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, 200) {
+                                        info!("explode {position:?}");
+                                        let r = 10;
+                                        for x in 0..2 * r {
+                                            for y in 0..2 * r {
+                                                for z in 0..2 * r {
+                                                    let delta = IVec3::new(x, y, z) - r;
+                                                    if delta.length_squared() <= r * r {
+                                                        world.set_block(position.plus(delta), Block::Air);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             TouchPhase::Moved => {
                                 let old = fingers.insert(id, location).unwrap();
