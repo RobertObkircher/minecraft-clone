@@ -5,6 +5,7 @@ To run:
 - `cargo run --release`
 - `cargo run --release --features reload` (to hot reload shader.wgsl)
 - `wasm-pack build --target web` to compile the web version in `./index.html`
+- web version: https://www.obkircher.xyz/minecraft-clone.html
 
 Controls:
 
