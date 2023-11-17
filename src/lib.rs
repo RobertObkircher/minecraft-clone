@@ -23,7 +23,7 @@ use wgpu::{
 };
 use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, ElementState, Event, MouseButton, Touch, TouchPhase, WindowEvent};
-use winit::event_loop::EventLoop;
+use winit::event_loop::{EventLoop, EventLoopWindowTarget};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, WindowBuilder};
 
@@ -275,276 +275,394 @@ pub async fn run() {
     let mut fingers = HashMap::new();
     let mut is_locked = false;
     let mut print_statistics = true;
-    event_loop.run(move |event, target| {
-        let id = window.id();
-        match event {
-            Event::WindowEvent { event, window_id } if window_id == id => {
-                match event {
-                    WindowEvent::Resized(new_size) => {
-                        config.width = new_size.width.max(MIN_SURFACE_SIZE);
-                        config.height = new_size.height.max(MIN_SURFACE_SIZE);
-                        surface.configure(&device, &config);
-                        depth = create_depth_texture(&device, &config);
 
-                        // necessary on macos, according to hello triangle example
-                        window.request_redraw();
-                    }
-                    WindowEvent::CloseRequested => {
-                        target.exit();
-                    }
-                    WindowEvent::RedrawRequested => {
-                        window.request_redraw();
+    #[cfg(target_arch = "wasm32")]
+    let run_event_loop = {
+        // In the browser we must not block the main javascript event loop.
+        // Winit just registers callbacks so that we can return immediately.
+        // If we called run instead it would "force" the return by throwing
+        // an exception.
+        use winit::platform::web::EventLoopExtWebSys;
+        |closure| event_loop.spawn(closure)
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let run_event_loop = |closure| event_loop.run(closure).unwrap();
 
-                        #[cfg(target_arch = "wasm32")]
-                        if is_locked && web_sys::window().unwrap().document().unwrap().pointer_lock_element().is_none() {
-                            // without this we would have to hit esc twice
-                            info!("Lost pointer grab");
-                            window.set_cursor_grab(CursorGrabMode::None).unwrap();
-                            is_locked = false;
+    run_event_loop(
+        move |event: Event<()>, target: &EventLoopWindowTarget<()>| {
+            let id = window.id();
+            match event {
+                Event::WindowEvent { event, window_id } if window_id == id => {
+                    match event {
+                        WindowEvent::Resized(new_size) => {
+                            config.width = new_size.width.max(MIN_SURFACE_SIZE);
+                            config.height = new_size.height.max(MIN_SURFACE_SIZE);
+                            surface.configure(&device, &config);
+                            depth = create_depth_texture(&device, &config);
+
+                            // necessary on macos, according to hello triangle example
+                            window.request_redraw();
                         }
+                        WindowEvent::CloseRequested => {
+                            target.exit();
+                        }
+                        WindowEvent::RedrawRequested => {
+                            window.request_redraw();
 
-                        #[cfg(feature = "reload")]
-                        if let Some(changed) = render_pipeline_reloader.get_changed_content() {
-                            render_pipeline = match reload::validate_shader(changed, &device.features(), &device.limits(), "shader.wgsl", &["vs_main", "fs_main"]) {
-                                Ok(source) => Some(create_chunk_shader_and_render_pipeline(&device, &pipeline_layout, swapchain_format.into(), source)),
-                                Err(e) => {
-                                    log::error!("Error while re-loading shader: {e}");
-                                    None
+                            #[cfg(target_arch = "wasm32")]
+                            if is_locked
+                                && web_sys::window()
+                                    .unwrap()
+                                    .document()
+                                    .unwrap()
+                                    .pointer_lock_element()
+                                    .is_none()
+                            {
+                                // without this we would have to hit esc twice
+                                info!("Lost pointer grab");
+                                window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                                is_locked = false;
+                            }
+
+                            #[cfg(feature = "reload")]
+                            if let Some(changed) = render_pipeline_reloader.get_changed_content() {
+                                render_pipeline = match reload::validate_shader(
+                                    changed,
+                                    &device.features(),
+                                    &device.limits(),
+                                    "shader.wgsl",
+                                    &["vs_main", "fs_main"],
+                                ) {
+                                    Ok(source) => Some(create_chunk_shader_and_render_pipeline(
+                                        &device,
+                                        &pipeline_layout,
+                                        swapchain_format.into(),
+                                        source,
+                                    )),
+                                    Err(e) => {
+                                        log::error!("Error while re-loading shader: {e}");
+                                        None
+                                    }
+                                }
+                            }
+                            #[cfg(feature = "reload")]
+                            let render_pipeline = if let Some(pipeline) = &render_pipeline {
+                                pipeline
+                            } else {
+                                return;
+                            };
+
+                            world.generate_chunks(&mut terrain, &mut statistics, player_chunk);
+                            world.update_meshes(
+                                &device,
+                                &queue,
+                                &chunk_bind_group_layout,
+                                &mut statistics,
+                            );
+
+                            let frame = surface
+                                .get_current_texture()
+                                .expect("Failed to acquire next swap chain texture");
+                            let view = frame.texture.create_view(&TextureViewDescriptor::default());
+                            let mut encoder = device
+                                .create_command_encoder(&CommandEncoderDescriptor { label: None });
+
+                            let chunk_offset =
+                                BlockPosition::new(camera.position.floor().as_ivec3())
+                                    .chunk()
+                                    .index();
+                            if chunk_offset != IVec3::ZERO {
+                                player_chunk = player_chunk.plus(chunk_offset);
+                                camera.position -= (chunk_offset * Chunk::SIZE as i32).as_vec3();
+                                queue.write_buffer(
+                                    &player_chunk_uniform_buffer,
+                                    0,
+                                    &bytemuck::cast_slice(
+                                        player_chunk.block().index().extend(0).as_ref(),
+                                    ),
+                                );
+                            }
+                            // must happen after the player chunk uniform update to avoid one invalid frame
+                            let projection_view_matrix = generate_matrix(
+                                config.width as f32 / config.height as f32,
+                                &camera,
+                            );
+                            queue.write_buffer(
+                                &projection_view_matrix_uniform_buffer,
+                                0,
+                                &bytemuck::cast_slice(projection_view_matrix.as_ref()),
+                            );
+
+                            {
+                                let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                                    label: Some("render world"),
+                                    color_attachments: &[Some(RenderPassColorAttachment {
+                                        view: &view,
+                                        resolve_target: None,
+                                        ops: Operations {
+                                            load: LoadOp::Clear(Color {
+                                                r: 238.0 / 255.0,
+                                                g: 238.0 / 255.0,
+                                                b: 238.0 / 255.0,
+                                                a: 1.0,
+                                            }),
+                                            store: StoreOp::Store,
+                                        },
+                                    })],
+                                    depth_stencil_attachment: Some(
+                                        RenderPassDepthStencilAttachment {
+                                            view: &depth.1,
+                                            depth_ops: Some(Operations {
+                                                load: LoadOp::Clear(1.0),
+                                                store: StoreOp::Store,
+                                            }),
+                                            stencil_ops: None,
+                                        },
+                                    ),
+                                    timestamp_writes: None,
+                                    occlusion_query_set: None,
+                                });
+
+                                pass.push_debug_group("chunks setup");
+                                pass.set_pipeline(&render_pipeline);
+                                pass.set_bind_group(0, &bind_group, &[]);
+                                pass.pop_debug_group();
+                                pass.insert_debug_marker("before chunks");
+
+                                for (position, mesh) in world.iter_chunk_meshes() {
+                                    pass.push_debug_group(&format!("Blocks of chunk {position:?}"));
+                                    pass.set_index_buffer(
+                                        mesh.index_buffer.slice(..),
+                                        IndexFormat::Uint16,
+                                    );
+                                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                    pass.set_bind_group(1, &mesh.bind_group, &[]);
+                                    pass.pop_debug_group();
+                                    pass.insert_debug_marker(&format!(
+                                        "Drawing chunk {position:?}"
+                                    ));
+                                    pass.draw_indexed(0..mesh.index_count as u32, 0, 0..1);
+                                }
+                            }
+
+                            queue.submit(Some(encoder.finish()));
+                            frame.present();
+
+                            let frame_time = start.elapsed();
+                            start += frame_time;
+
+                            statistics.end_frame(FrameInfo {
+                                player_position: player_chunk.block().index().as_vec3()
+                                    + camera.position,
+                                player_orientation: camera.computed_vectors().direction,
+                                frame_time,
+                                chunk_info_count: statistics.chunk_infos.len(),
+                                chunk_mesh_info_count: statistics.chunk_mesh_infos.len(),
+                            });
+
+                            if print_statistics {
+                                #[cfg(target_arch = "wasm32")]
+                                wasm::display_statistics(&statistics);
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    println!();
+                                    statistics
+                                        .print_last_frame(&mut std::io::stdout().lock())
+                                        .unwrap();
                                 }
                             }
                         }
-                        #[cfg(feature = "reload")]
-                        let render_pipeline = if let Some(pipeline) = &render_pipeline {
-                            pipeline
-                        } else {
-                            return;
-                        };
-
-                        world.generate_chunks(&mut terrain, &mut statistics, player_chunk);
-                        world.update_meshes(&device, &queue, &chunk_bind_group_layout, &mut statistics);
-
-                        let frame = surface
-                            .get_current_texture()
-                            .expect("Failed to acquire next swap chain texture");
-                        let view = frame
-                            .texture
-                            .create_view(&TextureViewDescriptor::default());
-                        let mut encoder =
-                            device.create_command_encoder(&CommandEncoderDescriptor {
-                                label: None,
-                            });
-
-                        let chunk_offset = BlockPosition::new(camera.position.floor().as_ivec3()).chunk().index();
-                        if chunk_offset != IVec3::ZERO {
-                            player_chunk = player_chunk.plus(chunk_offset);
-                            camera.position -= (chunk_offset * Chunk::SIZE as i32).as_vec3();
-                            queue.write_buffer(&player_chunk_uniform_buffer, 0, &bytemuck::cast_slice(player_chunk.block().index().extend(0).as_ref()));
+                        WindowEvent::Focused(_) => {
+                            // TODO winit bug? changing cursor grab mode here didn't work. the cursor gets stuck when reentering after alt-tab
                         }
-                        // must happen after the player chunk uniform update to avoid one invalid frame
-                        let projection_view_matrix = generate_matrix(config.width as f32 / config.height as f32, &camera);
-                        queue.write_buffer(&projection_view_matrix_uniform_buffer, 0, &bytemuck::cast_slice(projection_view_matrix.as_ref()));
-
-                        {
-                            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                                label: Some("render world"),
-                                color_attachments: &[Some(RenderPassColorAttachment {
-                                    view: &view,
-                                    resolve_target: None,
-                                    ops: Operations {
-                                        load: LoadOp::Clear(Color {
-                                            r: 238.0 / 255.0,
-                                            g: 238.0 / 255.0,
-                                            b: 238.0 / 255.0,
-                                            a: 1.0,
-                                        }),
-                                        store: StoreOp::Store,
-                                    },
-                                })],
-                                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
-                                    view: &depth.1,
-                                    depth_ops: Some(Operations {
-                                        load: LoadOp::Clear(1.0),
-                                        store: StoreOp::Store,
-                                    }),
-                                    stencil_ops: None,
-                                }),
-                                timestamp_writes: None,
-                                occlusion_query_set: None,
-                            });
-
-                            pass.push_debug_group("chunks setup");
-                            pass.set_pipeline(&render_pipeline);
-                            pass.set_bind_group(0, &bind_group, &[]);
-                            pass.pop_debug_group();
-                            pass.insert_debug_marker("before chunks");
-
-                            for (position, mesh) in world.iter_chunk_meshes() {
-                                pass.push_debug_group(&format!("Blocks of chunk {position:?}"));
-                                pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint16);
-                                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                pass.set_bind_group(1, &mesh.bind_group, &[]);
-                                pass.pop_debug_group();
-                                pass.insert_debug_marker(&format!("Drawing chunk {position:?}"));
-                                pass.draw_indexed(0..mesh.index_count as u32, 0, 0..1);
-                            }
-                        }
-
-                        queue.submit(Some(encoder.finish()));
-                        frame.present();
-
-                        let frame_time = start.elapsed();
-                        start += frame_time;
-
-                        statistics.end_frame(FrameInfo {
-                            player_position: player_chunk.block().index().as_vec3() + camera.position,
-                            player_orientation: camera.computed_vectors().direction,
-                            frame_time,
-                            chunk_info_count: statistics.chunk_infos.len(),
-                            chunk_mesh_info_count: statistics.chunk_mesh_infos.len(),
-                        });
-
-                        if print_statistics {
-                            #[cfg(target_arch = "wasm32")]
-                            wasm::display_statistics(&statistics);
-                            #[cfg(not(target_arch = "wasm32"))]
+                        WindowEvent::MouseInput { state, button, .. } => {
+                            if is_locked
+                                && state == ElementState::Pressed
+                                && button == MouseButton::Left
                             {
-                                println!();
-                                statistics.print_last_frame(&mut std::io::stdout().lock()).unwrap();
+                                let vs = camera.computed_vectors();
+                                if let (_, Some(position)) = world.find_nearest_block_on_ray(
+                                    player_chunk,
+                                    camera.position,
+                                    vs.direction,
+                                    200,
+                                ) {
+                                    info!("set_block {position:?}");
+                                    world.set_block(position, Block::Air);
+                                }
                             }
-                        }
-                    }
-                    WindowEvent::Focused(_) => {
-                        // TODO winit bug? changing cursor grab mode here didn't work. the cursor gets stuck when reentering after alt-tab
-                    }
-                    WindowEvent::MouseInput { state, button, .. } => {
-                        if is_locked && state == ElementState::Pressed && button == MouseButton::Left {
-                            let vs = camera.computed_vectors();
-                            if let (_, Some(position)) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, 200) {
-                                info!("set_block {position:?}");
-                                world.set_block(position, Block::Air);
+                            if is_locked
+                                && state == ElementState::Pressed
+                                && button == MouseButton::Right
+                            {
+                                let vs = camera.computed_vectors();
+                                if let (Some(position), _) = world.find_nearest_block_on_ray(
+                                    player_chunk,
+                                    camera.position,
+                                    vs.direction,
+                                    200,
+                                ) {
+                                    info!("set_block {position:?}");
+                                    world.set_block(position, Block::Dirt);
+                                }
                             }
 
-                        }
-                        if is_locked && state == ElementState::Pressed && button == MouseButton::Right {
-                            let vs = camera.computed_vectors();
-                            if let (Some(position), _) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, 200) {
-                                info!("set_block {position:?}");
-                                world.set_block(position, Block::Dirt);
-                            }
-                        }
-
-                        // TODO account for device_id
-                        if !is_locked && state == ElementState::Pressed && (button == MouseButton::Left || button == MouseButton::Right) {
-                            info!("Locking cursor");
-                            match window.set_cursor_grab(CursorGrabMode::Locked) {
+                            // TODO account for device_id
+                            if !is_locked
+                                && state == ElementState::Pressed
+                                && (button == MouseButton::Left || button == MouseButton::Right)
+                            {
+                                info!("Locking cursor");
+                                match window.set_cursor_grab(CursorGrabMode::Locked) {
                                 Ok(()) => {
                                     is_locked = true;
                                 }
                                 Err(e) => todo!("Lock cursor manually with set_position for x11 and windows? {e}")
                             }
+                            }
                         }
-                    }
-                    WindowEvent::Touch(Touch { device_id, phase, location, force: _, id }) => {
-                        let id = (device_id, id);
-                        match phase {
-                            TouchPhase::Started => {
-                                fingers.insert(id, location);
-                                if fingers.len() == 2 {
-                                    let vs = camera.computed_vectors();
-                                    if let (_, Some(position)) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, 200) {
-                                        info!("explode {position:?}");
-                                        let r = 10;
-                                        for x in 0..2 * r {
-                                            for y in 0..2 * r {
-                                                for z in 0..2 * r {
-                                                    let delta = IVec3::new(x, y, z) - r;
-                                                    if delta.length_squared() <= r * r {
-                                                        world.set_block(position.plus(delta), Block::Air);
+                        WindowEvent::Touch(Touch {
+                            device_id,
+                            phase,
+                            location,
+                            force: _,
+                            id,
+                        }) => {
+                            let id = (device_id, id);
+                            match phase {
+                                TouchPhase::Started => {
+                                    fingers.insert(id, location);
+                                    if fingers.len() == 2 {
+                                        let vs = camera.computed_vectors();
+                                        if let (_, Some(position)) = world
+                                            .find_nearest_block_on_ray(
+                                                player_chunk,
+                                                camera.position,
+                                                vs.direction,
+                                                200,
+                                            )
+                                        {
+                                            info!("explode {position:?}");
+                                            let r = 10;
+                                            for x in 0..2 * r {
+                                                for y in 0..2 * r {
+                                                    for z in 0..2 * r {
+                                                        let delta = IVec3::new(x, y, z) - r;
+                                                        if delta.length_squared() <= r * r {
+                                                            world.set_block(
+                                                                position.plus(delta),
+                                                                Block::Air,
+                                                            );
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
                                 }
-                            }
-                            TouchPhase::Moved => {
-                                let old = fingers.insert(id, location).unwrap();
-                                let dx = location.x - old.x;
-                                let dy = location.y - old.y;
+                                TouchPhase::Moved => {
+                                    let old = fingers.insert(id, location).unwrap();
+                                    let dx = location.x - old.x;
+                                    let dy = location.y - old.y;
 
-                                let speed = delta_time * 0.1;
-                                camera.turn_right(-dx as f32 * speed);
-                                camera.turn_up(dy as f32 * speed);
-                            }
-                            TouchPhase::Ended | TouchPhase::Cancelled => {
-                                fingers.remove(&id).unwrap();
+                                    let speed = delta_time * 0.1;
+                                    camera.turn_right(-dx as f32 * speed);
+                                    camera.turn_up(dy as f32 * speed);
+                                }
+                                TouchPhase::Ended | TouchPhase::Cancelled => {
+                                    fingers.remove(&id).unwrap();
+                                }
                             }
                         }
-                    }
-                    WindowEvent::KeyboardInput { event, .. } => {
-                        if is_locked && event.logical_key == Key::Named(NamedKey::Escape) {
-                            info!("Unlocking cursor");
-                            window.set_cursor_grab(CursorGrabMode::None).unwrap();
-                            is_locked = false;
-                        }
-                        let speed = delta_time * 100.0;
-                        if let Key::Character(str) = event.logical_key {
-                            let vectors = camera.computed_vectors();
-                            match str.as_str() {
-                                "w" => camera.position += vectors.direction * speed,
-                                "a" => camera.position -= vectors.right * speed,
-                                "s" => camera.position -= vectors.direction * speed,
-                                "d" => camera.position += vectors.right * speed,
-                                "p" => if event.state.is_pressed() {
-                                    print_statistics ^= true;
-                                    #[cfg(target_arch = "wasm32")]
-                                    if !print_statistics {
-                                        wasm::hide_statistics();
+                        WindowEvent::KeyboardInput { event, .. } => {
+                            if is_locked && event.logical_key == Key::Named(NamedKey::Escape) {
+                                info!("Unlocking cursor");
+                                window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                                is_locked = false;
+                            }
+                            let speed = delta_time * 100.0;
+                            if let Key::Character(str) = event.logical_key {
+                                let vectors = camera.computed_vectors();
+                                match str.as_str() {
+                                    "w" => camera.position += vectors.direction * speed,
+                                    "a" => camera.position -= vectors.right * speed,
+                                    "s" => camera.position -= vectors.direction * speed,
+                                    "d" => camera.position += vectors.right * speed,
+                                    "p" => {
+                                        if event.state.is_pressed() {
+                                            print_statistics ^= true;
+                                            #[cfg(target_arch = "wasm32")]
+                                            if !print_statistics {
+                                                wasm::hide_statistics();
+                                            }
+                                        }
                                     }
-                                },
-                                "q" => if event.state.is_pressed() {                    
-                                    let vs = camera.computed_vectors();
-                                    if let (_, Some(position)) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, 200) {
-                                        info!("explode {position:?}");
-                                        let r = 10;
-                                        for x in 0..2 * r {
-                                            for y in 0..2 * r {
-                                                for z in 0..2 * r {
-                                                    let delta = IVec3::new(x, y, z) - r;
-                                                    if delta.length_squared() <= r * r {
-                                                        world.set_block(position.plus(delta), Block::Air);
+                                    "q" => {
+                                        if event.state.is_pressed() {
+                                            let vs = camera.computed_vectors();
+                                            if let (_, Some(position)) = world
+                                                .find_nearest_block_on_ray(
+                                                    player_chunk,
+                                                    camera.position,
+                                                    vs.direction,
+                                                    200,
+                                                )
+                                            {
+                                                info!("explode {position:?}");
+                                                let r = 10;
+                                                for x in 0..2 * r {
+                                                    for y in 0..2 * r {
+                                                        for z in 0..2 * r {
+                                                            let delta = IVec3::new(x, y, z) - r;
+                                                            if delta.length_squared() <= r * r {
+                                                                world.set_block(
+                                                                    position.plus(delta),
+                                                                    Block::Air,
+                                                                );
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
-                                }
-                                "e" => if event.state.is_pressed() {
-                                    let vs = camera.computed_vectors();
-                                    if let (Some(position), _) = world.find_nearest_block_on_ray(player_chunk, camera.position, vs.direction, 200) {
-                                        info!("anti-explode {position:?}");
-                                        let r = 10;
-                                        for x in 0..2 * r {
-                                            for y in 0..2 * r {
-                                                for z in 0..2 * r {
-                                                    let delta = IVec3::new(x, y, z) - r;
-                                                    if delta.length_squared() <= r * r {
-                                                        world.set_block(position.plus(delta), Block::Dirt);
+                                    "e" => {
+                                        if event.state.is_pressed() {
+                                            let vs = camera.computed_vectors();
+                                            if let (Some(position), _) = world
+                                                .find_nearest_block_on_ray(
+                                                    player_chunk,
+                                                    camera.position,
+                                                    vs.direction,
+                                                    200,
+                                                )
+                                            {
+                                                info!("anti-explode {position:?}");
+                                                let r = 10;
+                                                for x in 0..2 * r {
+                                                    for y in 0..2 * r {
+                                                        for z in 0..2 * r {
+                                                            let delta = IVec3::new(x, y, z) - r;
+                                                            if delta.length_squared() <= r * r {
+                                                                world.set_block(
+                                                                    position.plus(delta),
+                                                                    Block::Dirt,
+                                                                );
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
                                     }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-            Event::DeviceEvent { event, .. } => {
-                match event {
+                Event::DeviceEvent { event, .. } => match event {
                     DeviceEvent::MouseMotion { delta } => {
                         if is_locked && window.has_focus() {
                             let speed = delta_time * 0.1;
@@ -553,11 +671,11 @@ pub async fn run() {
                         }
                     }
                     _ => {}
-                }
+                },
+                _ => {}
             }
-            _ => {}
-        }
-    }).unwrap();
+        },
+    );
 }
 
 fn create_chunk_shader_and_render_pipeline(

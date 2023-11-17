@@ -50,12 +50,23 @@ The code is available on <a href="https://github.com/RobertObkircher/minecraft-c
 <script type="module">
     import init, {wasm_main} from "./pkg/minecraft_clone.js";
 
-    let worker = new Worker("worker.js", {type: "module"});
+    let workers = [];
+    for (let i = 0; i < window.navigator.hardwareConcurrency; i++) {
+        let worker = new Worker("worker.js", {type: "module"});
+        workers.push(worker);
+        worker.onmessage = ev => console.log("main got message from worker ", i, ": ", ev);
+    }
+
     await init();
 
-    worker.postMessage(new Uint8Array(42));
-
+    // this doesn't actually block
     await wasm_main();
+
+    console.log("after wasm_main()");
+
+    for (let worker of workers) {
+        worker.postMessage("hello");
+    }
 </script>
 </body>
 </html>
