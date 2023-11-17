@@ -1,11 +1,20 @@
 use crate::statistics::Statistics;
 use log::{Level, Log, Metadata, Record};
+use std::collections::VecDeque;
 use std::panic::PanicInfo;
+use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 use web_sys::Element;
 use winit::platform::web::WindowExtWebSys;
 use winit::window::Window;
+
+#[wasm_bindgen]
+extern "C" {
+    fn hardware_concurrency() -> u32;
+    fn spawn_worker() -> u32;
+    fn post_message(receiver: u32, message: Box<[u32]>);
+}
 
 #[wasm_bindgen(start)]
 pub fn wasm_start() {
@@ -16,12 +25,29 @@ pub fn wasm_start() {
 
 #[wasm_bindgen]
 pub async fn wasm_main() {
+    for _ in 0..hardware_concurrency() {
+        let id = spawn_worker();
+        log::info!("Spawned {id}");
+    }
+    post_message(1, Box::new([1]));
+    post_message(2, Box::new([1, 2]));
+    post_message(3, Box::new([1, 2, 3]));
+
     crate::run().await;
 }
 
 #[wasm_bindgen]
-pub fn process_message(message: &[u8]) {
-    log::info!("Got message with length: {}", message.len());
+pub fn wasm_worker() -> bool {
+    post_message(0, Box::new([42]));
+    false
+}
+
+static INCOMING: Mutex<VecDeque<(u32, Box<[u8]>)>> = Mutex::new(VecDeque::new());
+
+#[wasm_bindgen]
+pub fn wasm_onmessage(id: u32, message: Box<[u8]>) {
+    log::info!("onmessage got: {id} {message:?}");
+    INCOMING.lock().unwrap().push_back((id, message));
 }
 
 pub fn setup_window(winit_window: &Window) {
