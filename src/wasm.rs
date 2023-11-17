@@ -8,12 +8,20 @@ use winit::platform::web::WindowExtWebSys;
 use winit::window::Window;
 
 #[wasm_bindgen(start)]
-pub async fn wasm_main() -> Result<(), JsValue> {
+pub fn wasm_start() {
     std::panic::set_hook(Box::new(panic_hook));
     log::set_logger(&LOGGER).unwrap();
     log::set_max_level(log::Level::Info.to_level_filter());
+}
+
+#[wasm_bindgen]
+pub async fn wasm_main() {
     crate::run().await;
-    Ok(())
+}
+
+#[wasm_bindgen]
+pub fn process_message(message: &[u8]) {
+    log::info!("Got message with length: {}", message.len());
 }
 
 pub fn setup_window(winit_window: &Window) {

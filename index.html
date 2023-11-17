@@ -48,9 +48,14 @@ The code is available on <a href="https://github.com/RobertObkircher/minecraft-c
 <br>
 <pre id="statistics"></pre>
 <script type="module">
-    import init from "./pkg/minecraft_clone.js";
+    import init, {wasm_main} from "./pkg/minecraft_clone.js";
 
-    init();
+    let worker = new Worker("worker.js", {type: "module"});
+    await init();
+
+    worker.postMessage(new Uint8Array(42));
+
+    await wasm_main();
 </script>
 </body>
 </html>
