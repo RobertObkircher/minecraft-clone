@@ -2,6 +2,7 @@ import init, {wasm_renderer, wasm_update, wasm_update_with_message } from "./pkg
 
 /** @type {Worker[]} */
 let workers = [];
+let initialized;
 
 function do_update() {
     let timeout = wasm_update();
@@ -28,7 +29,7 @@ export function spawn_worker() {
     let worker = new Worker("worker.js", {type: "module"});
     let id = workers.push(worker);
     worker.onmessage = ev => {
-        do_update_with_message(id, ev);
+        initialized.then(() => do_update_with_message(0, ev));
     };
     return id;
 }
@@ -49,13 +50,13 @@ export function post_message(id, message) {
 self.spawn_worker = spawn_worker;
 self.post_message = post_message;
 
+initialized = init();
 if (self.document) {
-    await init();
+    await initialized;
     await wasm_renderer();
 } else {
-    onmessage = async ev => {
-        await init();
-        do_update_with_message(0, ev);
+    onmessage = ev => {
+        initialized.then(() => do_update_with_message(0, ev));
     };
-    await init();
+    await initialized;
 }
