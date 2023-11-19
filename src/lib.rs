@@ -9,23 +9,25 @@ use glam::{IVec3, Mat4, Vec3};
 use log::info;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
-    BindGroupDescriptor, BindGroupEntry, BindGroupLayoutDescriptor, BindGroupLayoutEntry,
-    BindingResource, BindingType, BufferBindingType, BufferSize, BufferUsages, Color,
-    ColorTargetState, CommandEncoderDescriptor, CompareFunction, DepthStencilState, Device,
-    DeviceDescriptor, Extent3d, Face, Features, FragmentState, IndexFormat, Instance, Limits,
-    LoadOp, MultisampleState, Operations, PipelineLayout, PipelineLayoutDescriptor,
-    PowerPreference, PresentMode, PrimitiveState, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline,
-    RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, StoreOp, SurfaceConfiguration, Texture, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView,
-    TextureViewDescriptor, TextureViewDimension, VertexState,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBindingType, BufferSize,
+    BufferUsages, Color, ColorTargetState, CommandEncoderDescriptor, CompareFunction,
+    DepthStencilState, Device, DeviceDescriptor, Extent3d, Face, Features, FragmentState,
+    IndexFormat, Instance, Limits, LoadOp, MultisampleState, Operations, PipelineLayout,
+    PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue,
+    RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
+    RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType,
+    ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration,
+    Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+    TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
-use winit::dpi::LogicalSize;
-use winit::event::{DeviceEvent, ElementState, Event, MouseButton, Touch, TouchPhase, WindowEvent};
+use winit::dpi::{LogicalSize, PhysicalPosition};
+use winit::event::{
+    DeviceEvent, DeviceId, ElementState, Event, MouseButton, Touch, TouchPhase, WindowEvent,
+};
 use winit::event_loop::{EventLoop, EventLoopWindowTarget};
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{CursorGrabMode, WindowBuilder};
+use winit::window::{CursorGrabMode, Window, WindowBuilder};
 
 use crate::camera::Camera;
 use crate::chunk::{Block, Chunk};
@@ -62,18 +64,6 @@ fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
     let view = Mat4::look_to_rh(camera.position, vs.direction, vs.up);
 
     projection * view
-}
-
-struct RendererState;
-
-impl RendererState {
-    pub fn update(
-        &mut self,
-        _worker: &mut impl Worker,
-        _message: Option<WorkerMessage>,
-    ) -> Option<Duration> {
-        None
-    }
 }
 
 struct SimulationState {
@@ -160,17 +150,663 @@ pub fn create_depth_texture(
 /// wgpu wants this to be non-zero and chromium 4x4
 const MIN_SURFACE_SIZE: u32 = 4;
 
+pub struct RendererState {
+    config: SurfaceConfiguration,
+    surface: Surface,
+    depth: (Texture, TextureView),
+    device: Device,
+    queue: Queue,
+    #[cfg(not(feature = "reload"))]
+    render_pipeline: RenderPipeline,
+    #[cfg(feature = "reload")]
+    render_pipeline_reloader: reload::Reloader,
+    #[cfg(feature = "reload")]
+    render_pipeline: Option<RenderPipeline>,
+    pipeline_layout: PipelineLayout,
+    swapchain_format: TextureFormat,
+    bind_group: BindGroup,
+    chunk_bind_group_layout: BindGroupLayout,
+    statistics: Statistics,
+    world: World,
+    terrain: TerrainGenerator,
+    camera: Camera,
+    projection_view_matrix_uniform_buffer: Buffer,
+    player_chunk: ChunkPosition,
+    player_chunk_uniform_buffer: Buffer,
+    start: Timer,
+    delta_time: f32,
+    fingers: HashMap<(DeviceId, u64), PhysicalPosition<f64>>,
+    is_locked: bool,
+    print_statistics: bool,
+
+    /// WARNING: order matters. This must be dropped last!
+    window: Window,
+}
+
+impl RendererState {
+    pub fn update(
+        &mut self,
+        _worker: &mut impl Worker,
+        _message: Option<WorkerMessage>,
+    ) -> Option<Duration> {
+        None
+    }
+}
+
+impl RendererState {
+    pub async fn new<W: Worker>(window: Window, worker: &mut W) -> Self {
+        let simulation = worker.spawn_child();
+        let seed = WorldSeed(42);
+        {
+            let mut message = [0u8; 9];
+            message[0..8].copy_from_slice(bytemuck::bytes_of(&seed));
+            *message.last_mut().unwrap() = MessageTag::InitSimulation as u8;
+            worker.send_message(simulation, Box::new(message));
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        wasm::setup_window(&window);
+
+        let statistics = Statistics::new();
+
+        let instance = Instance::default();
+        let surface = unsafe {
+            // SAFETY:
+            // * window is a valid object to create a surface upon.
+            // * window remains valid until after the Surface is dropped
+            //   because it is stored as the last field in RendererState,
+            //   so it is dropped last.
+            instance.create_surface(&window)
+        }
+        .unwrap();
+
+        let adapter = instance
+            .request_adapter(&RequestAdapterOptions {
+                power_preference: PowerPreference::default(),
+                force_fallback_adapter: false,
+                compatible_surface: Some(&surface),
+            })
+            .await
+            .expect("Failed to find an appropriate adapter");
+
+        let (device, queue) = adapter
+            .request_device(
+                &DeviceDescriptor {
+                    label: None,
+                    features: Features::empty(),
+                    // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
+                    limits: Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+                },
+                None,
+            )
+            .await
+            .expect("Failed to create device");
+
+        let swapchain_capabilities = surface.get_capabilities(&adapter);
+        let swapchain_format = swapchain_capabilities
+            .formats
+            .iter()
+            .copied()
+            .find(|it| it.is_srgb())
+            .expect("Expected srgb surface");
+
+        let size = window.inner_size();
+        let config = SurfaceConfiguration {
+            usage: TextureUsages::RENDER_ATTACHMENT,
+            format: swapchain_format,
+            width: size.width.max(MIN_SURFACE_SIZE),
+            height: size.height.max(MIN_SURFACE_SIZE),
+            present_mode: PresentMode::Fifo,
+            alpha_mode: swapchain_capabilities.alpha_modes[0],
+            view_formats: vec![],
+        };
+
+        surface.configure(&device, &config);
+
+        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: None,
+            entries: &[
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: BufferSize::new(64),
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: BufferSize::new(16), // Actually 12, but that isn't supported by webgl
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Float { filterable: true },
+                        view_dimension: TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::NonFiltering), // TODO filtering?
+                    count: None,
+                },
+            ],
+        });
+        let chunk_bind_group_layout =
+            device.create_bind_group_layout(&ChunkMesh::BIND_GROUP_LAYOUT_DESCRIPTOR);
+
+        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: None,
+            bind_group_layouts: &[&bind_group_layout, &chunk_bind_group_layout],
+            push_constant_ranges: &[],
+        });
+
+        let mut camera = Camera::new(Vec3::new(6.0, 6.0, 6.0));
+        camera.turn_right(-TAU / 3.0);
+        camera.turn_up(-PI / 2.0 / 3.0);
+
+        let projection_view_matrix_uniform_buffer =
+            device.create_buffer_init(&BufferInitDescriptor {
+                label: Some("Uniform Buffer"),
+                contents: bytemuck::cast_slice(
+                    generate_matrix(config.width as f32 / config.height as f32, &camera).as_ref(),
+                ),
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            });
+        let player_chunk = ChunkPosition::from_chunk_index(IVec3::ZERO);
+        let player_chunk_uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Uniform Buffer"),
+            contents: bytemuck::cast_slice(player_chunk.block().index().extend(0).as_ref()),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+
+        let blocks = BlockTexture::from_bitmap_bytes(
+            &device,
+            &queue,
+            include_bytes!("blocks.bmp"),
+            "blocks.bmp",
+        );
+
+        let bind_group = device.create_bind_group(&BindGroupDescriptor {
+            layout: &bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: projection_view_matrix_uniform_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: player_chunk_uniform_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&blocks.view),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Sampler(&blocks.sampler),
+                },
+            ],
+            label: None,
+        });
+
+        let depth = create_depth_texture(&device, &config);
+
+        #[cfg(not(feature = "reload"))]
+        let render_pipeline = create_chunk_shader_and_render_pipeline(
+            &device,
+            &pipeline_layout,
+            swapchain_format.into(),
+            include_str!("shader.wgsl"),
+        );
+
+        #[cfg(feature = "reload")]
+        let render_pipeline_reloader = reload::Reloader::new(file!(), "shader.wgsl");
+        #[cfg(feature = "reload")]
+        let render_pipeline = None;
+
+        let world = World::new(12, 16);
+        let terrain = TerrainGenerator::new(seed);
+
+        let start = Timer::now();
+        // TODO compute delta_time
+        let delta_time = Duration::from_millis(16).as_secs_f32();
+
+        Self {
+            config,
+            surface,
+            depth,
+            device,
+            queue,
+            render_pipeline,
+            #[cfg(feature = "reload")]
+            render_pipeline_reloader,
+            pipeline_layout,
+            swapchain_format,
+            bind_group,
+            chunk_bind_group_layout,
+            statistics,
+            world,
+            terrain,
+            camera,
+            projection_view_matrix_uniform_buffer,
+            player_chunk,
+            player_chunk_uniform_buffer,
+            start,
+            delta_time,
+            fingers: HashMap::new(),
+            is_locked: false,
+            print_statistics: true,
+            window,
+        }
+    }
+
+    pub fn process_event(&mut self, event: Event<()>, target: &EventLoopWindowTarget<()>) {
+        let id = self.window.id();
+
+        match event {
+            Event::WindowEvent { event, window_id } if window_id == id => {
+                match event {
+                    WindowEvent::Resized(new_size) => {
+                        self.config.width = new_size.width.max(MIN_SURFACE_SIZE);
+                        self.config.height = new_size.height.max(MIN_SURFACE_SIZE);
+                        self.surface.configure(&self.device, &self.config);
+                        self.depth = create_depth_texture(&self.device, &self.config);
+
+                        // necessary on macos, according to hello triangle example
+                        self.window.request_redraw();
+                    }
+                    WindowEvent::CloseRequested => {
+                        target.exit();
+                    }
+                    WindowEvent::RedrawRequested => {
+                        self.window.request_redraw();
+
+                        #[cfg(target_arch = "wasm32")]
+                        if self.is_locked
+                            && web_sys::window()
+                                .unwrap()
+                                .document()
+                                .unwrap()
+                                .pointer_lock_element()
+                                .is_none()
+                        {
+                            // without this we would have to hit esc twice
+                            info!("Lost pointer grab");
+                            self.window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                            self.is_locked = false;
+                        }
+
+                        #[cfg(feature = "reload")]
+                        if let Some(changed) = self.render_pipeline_reloader.get_changed_content() {
+                            self.render_pipeline = match reload::validate_shader(
+                                changed,
+                                &self.device.features(),
+                                &self.device.limits(),
+                                "shader.wgsl",
+                                &["vs_main", "fs_main"],
+                            ) {
+                                Ok(source) => Some(create_chunk_shader_and_render_pipeline(
+                                    &self.device,
+                                    &self.pipeline_layout,
+                                    self.swapchain_format.into(),
+                                    source,
+                                )),
+                                Err(e) => {
+                                    log::error!("Error while re-loading shader: {e}");
+                                    None
+                                }
+                            }
+                        }
+                        #[cfg(feature = "reload")]
+                        let render_pipeline = if let Some(pipeline) = &self.render_pipeline {
+                            pipeline
+                        } else {
+                            return;
+                        };
+                        #[cfg(not(feature = "reload"))]
+                        let render_pipeline = &self.render_pipeline;
+
+                        self.world.generate_chunks(
+                            &mut self.terrain,
+                            &mut self.statistics,
+                            self.player_chunk,
+                        );
+                        self.world.update_meshes(
+                            &self.device,
+                            &self.queue,
+                            &self.chunk_bind_group_layout,
+                            &mut self.statistics,
+                        );
+
+                        let frame = self
+                            .surface
+                            .get_current_texture()
+                            .expect("Failed to acquire next swap chain texture");
+                        let view = frame.texture.create_view(&TextureViewDescriptor::default());
+                        let mut encoder = self
+                            .device
+                            .create_command_encoder(&CommandEncoderDescriptor { label: None });
+
+                        let chunk_offset =
+                            BlockPosition::new(self.camera.position.floor().as_ivec3())
+                                .chunk()
+                                .index();
+                        if chunk_offset != IVec3::ZERO {
+                            self.player_chunk = self.player_chunk.plus(chunk_offset);
+                            self.camera.position -= (chunk_offset * Chunk::SIZE as i32).as_vec3();
+                            self.queue.write_buffer(
+                                &self.player_chunk_uniform_buffer,
+                                0,
+                                &bytemuck::cast_slice(
+                                    self.player_chunk.block().index().extend(0).as_ref(),
+                                ),
+                            );
+                        }
+                        // must happen after the player chunk uniform update to avoid one invalid frame
+                        let projection_view_matrix = generate_matrix(
+                            self.config.width as f32 / self.config.height as f32,
+                            &self.camera,
+                        );
+                        self.queue.write_buffer(
+                            &self.projection_view_matrix_uniform_buffer,
+                            0,
+                            &bytemuck::cast_slice(projection_view_matrix.as_ref()),
+                        );
+
+                        {
+                            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                                label: Some("render world"),
+                                color_attachments: &[Some(RenderPassColorAttachment {
+                                    view: &view,
+                                    resolve_target: None,
+                                    ops: Operations {
+                                        load: LoadOp::Clear(Color {
+                                            r: 238.0 / 255.0,
+                                            g: 238.0 / 255.0,
+                                            b: 238.0 / 255.0,
+                                            a: 1.0,
+                                        }),
+                                        store: StoreOp::Store,
+                                    },
+                                })],
+                                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                                    view: &self.depth.1,
+                                    depth_ops: Some(Operations {
+                                        load: LoadOp::Clear(1.0),
+                                        store: StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                }),
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                            });
+
+                            pass.push_debug_group("chunks setup");
+                            pass.set_pipeline(render_pipeline);
+                            pass.set_bind_group(0, &self.bind_group, &[]);
+                            pass.pop_debug_group();
+                            pass.insert_debug_marker("before chunks");
+
+                            for (position, mesh) in self.world.iter_chunk_meshes() {
+                                pass.push_debug_group(&format!("Blocks of chunk {position:?}"));
+                                pass.set_index_buffer(
+                                    mesh.index_buffer.slice(..),
+                                    IndexFormat::Uint16,
+                                );
+                                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                                pass.set_bind_group(1, &mesh.bind_group, &[]);
+                                pass.pop_debug_group();
+                                pass.insert_debug_marker(&format!("Drawing chunk {position:?}"));
+                                pass.draw_indexed(0..mesh.index_count as u32, 0, 0..1);
+                            }
+                        }
+
+                        self.queue.submit(Some(encoder.finish()));
+                        frame.present();
+
+                        let frame_time = self.start.elapsed();
+                        self.start += frame_time;
+
+                        self.statistics.end_frame(FrameInfo {
+                            player_position: self.player_chunk.block().index().as_vec3()
+                                + self.camera.position,
+                            player_orientation: self.camera.computed_vectors().direction,
+                            frame_time,
+                            chunk_info_count: self.statistics.chunk_infos.len(),
+                            chunk_mesh_info_count: self.statistics.chunk_mesh_infos.len(),
+                        });
+
+                        if self.print_statistics {
+                            #[cfg(target_arch = "wasm32")]
+                            wasm::display_statistics(&self.statistics);
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                println!();
+                                self.statistics
+                                    .print_last_frame(&mut std::io::stdout().lock())
+                                    .unwrap();
+                            }
+                        }
+                    }
+                    WindowEvent::Focused(_) => {
+                        // TODO winit bug? changing cursor grab mode here didn't work. the cursor gets stuck when reentering after alt-tab
+                    }
+                    WindowEvent::MouseInput { state, button, .. } => {
+                        if self.is_locked
+                            && state == ElementState::Pressed
+                            && button == MouseButton::Left
+                        {
+                            let vs = self.camera.computed_vectors();
+                            if let (_, Some(position)) = self.world.find_nearest_block_on_ray(
+                                self.player_chunk,
+                                self.camera.position,
+                                vs.direction,
+                                200,
+                            ) {
+                                info!("set_block {position:?}");
+                                self.world.set_block(position, Block::Air);
+                            }
+                        }
+                        if self.is_locked
+                            && state == ElementState::Pressed
+                            && button == MouseButton::Right
+                        {
+                            let vs = self.camera.computed_vectors();
+                            if let (Some(position), _) = self.world.find_nearest_block_on_ray(
+                                self.player_chunk,
+                                self.camera.position,
+                                vs.direction,
+                                200,
+                            ) {
+                                info!("set_block {position:?}");
+                                self.world.set_block(position, Block::Dirt);
+                            }
+                        }
+
+                        // TODO account for device_id
+                        if !self.is_locked
+                            && state == ElementState::Pressed
+                            && (button == MouseButton::Left || button == MouseButton::Right)
+                        {
+                            info!("Locking cursor");
+                            match self.window.set_cursor_grab(CursorGrabMode::Locked) {
+                                Ok(()) => {
+                                    self.is_locked = true;
+                                }
+                                Err(e) => todo!("Lock cursor manually with set_position for x11 and windows? {e}")
+                            }
+                        }
+                    }
+                    WindowEvent::Touch(Touch {
+                        device_id,
+                        phase,
+                        location,
+                        force: _,
+                        id,
+                    }) => {
+                        let id = (device_id, id);
+                        match phase {
+                            TouchPhase::Started => {
+                                self.fingers.insert(id, location);
+                                if self.fingers.len() == 2 {
+                                    let vs = self.camera.computed_vectors();
+                                    if let (_, Some(position)) =
+                                        self.world.find_nearest_block_on_ray(
+                                            self.player_chunk,
+                                            self.camera.position,
+                                            vs.direction,
+                                            200,
+                                        )
+                                    {
+                                        info!("explode {position:?}");
+                                        let r = 10;
+                                        for x in 0..2 * r {
+                                            for y in 0..2 * r {
+                                                for z in 0..2 * r {
+                                                    let delta = IVec3::new(x, y, z) - r;
+                                                    if delta.length_squared() <= r * r {
+                                                        self.world.set_block(
+                                                            position.plus(delta),
+                                                            Block::Air,
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            TouchPhase::Moved => {
+                                let old = self.fingers.insert(id, location).unwrap();
+                                let dx = location.x - old.x;
+                                let dy = location.y - old.y;
+
+                                let speed = self.delta_time * 0.1;
+                                self.camera.turn_right(-dx as f32 * speed);
+                                self.camera.turn_up(dy as f32 * speed);
+                            }
+                            TouchPhase::Ended | TouchPhase::Cancelled => {
+                                self.fingers.remove(&id).unwrap();
+                            }
+                        }
+                    }
+                    WindowEvent::KeyboardInput { event, .. } => {
+                        if self.is_locked && event.logical_key == Key::Named(NamedKey::Escape) {
+                            info!("Unlocking cursor");
+                            self.window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                            self.is_locked = false;
+                        }
+                        let speed = self.delta_time * 100.0;
+                        if let Key::Character(str) = event.logical_key {
+                            let vectors = self.camera.computed_vectors();
+                            match str.as_str() {
+                                "w" => self.camera.position += vectors.direction * speed,
+                                "a" => self.camera.position -= vectors.right * speed,
+                                "s" => self.camera.position -= vectors.direction * speed,
+                                "d" => self.camera.position += vectors.right * speed,
+                                "p" => {
+                                    if event.state.is_pressed() {
+                                        self.print_statistics ^= true;
+                                        #[cfg(target_arch = "wasm32")]
+                                        if !self.print_statistics {
+                                            wasm::hide_statistics();
+                                        }
+                                    }
+                                }
+                                "q" => {
+                                    if event.state.is_pressed() {
+                                        let vs = self.camera.computed_vectors();
+                                        if let (_, Some(position)) =
+                                            self.world.find_nearest_block_on_ray(
+                                                self.player_chunk,
+                                                self.camera.position,
+                                                vs.direction,
+                                                200,
+                                            )
+                                        {
+                                            info!("explode {position:?}");
+                                            let r = 10;
+                                            for x in 0..2 * r {
+                                                for y in 0..2 * r {
+                                                    for z in 0..2 * r {
+                                                        let delta = IVec3::new(x, y, z) - r;
+                                                        if delta.length_squared() <= r * r {
+                                                            self.world.set_block(
+                                                                position.plus(delta),
+                                                                Block::Air,
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                "e" => {
+                                    if event.state.is_pressed() {
+                                        let vs = self.camera.computed_vectors();
+                                        if let (Some(position), _) =
+                                            self.world.find_nearest_block_on_ray(
+                                                self.player_chunk,
+                                                self.camera.position,
+                                                vs.direction,
+                                                200,
+                                            )
+                                        {
+                                            info!("anti-explode {position:?}");
+                                            let r = 10;
+                                            for x in 0..2 * r {
+                                                for y in 0..2 * r {
+                                                    for z in 0..2 * r {
+                                                        let delta = IVec3::new(x, y, z) - r;
+                                                        if delta.length_squared() <= r * r {
+                                                            self.world.set_block(
+                                                                position.plus(delta),
+                                                                Block::Dirt,
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Event::DeviceEvent { event, .. } => match event {
+                DeviceEvent::MouseMotion { delta } => {
+                    if self.is_locked && self.window.has_focus() {
+                        let speed = self.delta_time * 0.1;
+                        self.camera.turn_right(delta.0 as f32 * speed);
+                        self.camera.turn_up(-delta.1 as f32 * speed);
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+}
 pub async fn renderer(worker: &mut impl Worker) {
     info!("Hello, world!");
-
-    let simulation = worker.spawn_child();
-    let seed = WorldSeed(42);
-    {
-        let mut message = [0u8; 9];
-        message[0..8].copy_from_slice(bytemuck::bytes_of(&seed));
-        *message.last_mut().unwrap() = MessageTag::InitSimulation as u8;
-        worker.send_message(simulation, Box::new(message));
-    }
 
     let event_loop = EventLoop::new().unwrap();
 
@@ -180,183 +816,7 @@ pub async fn renderer(worker: &mut impl Worker) {
         .build(&event_loop)
         .unwrap();
 
-    // SAFETY: ensure that window is not moved to the closure and dropped last
-    let window = &window;
-
-    #[cfg(target_arch = "wasm32")]
-    wasm::setup_window(&window);
-
-    let mut statistics = Statistics::new();
-
-    let instance = Instance::default();
-    let surface = unsafe { instance.create_surface(&window) }.unwrap();
-
-    let adapter = instance
-        .request_adapter(&RequestAdapterOptions {
-            power_preference: PowerPreference::default(),
-            force_fallback_adapter: false,
-            compatible_surface: Some(&surface),
-        })
-        .await
-        .expect("Failed to find an appropriate adapter");
-
-    let (device, queue) = adapter
-        .request_device(
-            &DeviceDescriptor {
-                label: None,
-                features: Features::empty(),
-                // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                limits: Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
-            },
-            None,
-        )
-        .await
-        .expect("Failed to create device");
-
-    let swapchain_capabilities = surface.get_capabilities(&adapter);
-    let swapchain_format = swapchain_capabilities
-        .formats
-        .iter()
-        .copied()
-        .find(|it| it.is_srgb())
-        .expect("Expected srgb surface");
-
-    let size = window.inner_size();
-    let mut config = SurfaceConfiguration {
-        usage: TextureUsages::RENDER_ATTACHMENT,
-        format: swapchain_format,
-        width: size.width.max(MIN_SURFACE_SIZE),
-        height: size.height.max(MIN_SURFACE_SIZE),
-        present_mode: PresentMode::Fifo,
-        alpha_mode: swapchain_capabilities.alpha_modes[0],
-        view_formats: vec![],
-    };
-
-    surface.configure(&device, &config);
-
-    let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-        label: None,
-        entries: &[
-            BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::VERTEX,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: BufferSize::new(64),
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 1,
-                visibility: ShaderStages::VERTEX,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: BufferSize::new(16), // Actually 12, but that isn't supported by webgl
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 2,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Texture {
-                    sample_type: TextureSampleType::Float { filterable: true },
-                    view_dimension: TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            BindGroupLayoutEntry {
-                binding: 3,
-                visibility: ShaderStages::FRAGMENT,
-                ty: BindingType::Sampler(SamplerBindingType::NonFiltering), // TODO filtering?
-                count: None,
-            },
-        ],
-    });
-    let chunk_bind_group_layout =
-        device.create_bind_group_layout(&ChunkMesh::BIND_GROUP_LAYOUT_DESCRIPTOR);
-
-    let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-        label: None,
-        bind_group_layouts: &[&bind_group_layout, &chunk_bind_group_layout],
-        push_constant_ranges: &[],
-    });
-
-    let mut camera = Camera::new(Vec3::new(6.0, 6.0, 6.0));
-    camera.turn_right(-TAU / 3.0);
-    camera.turn_up(-PI / 2.0 / 3.0);
-
-    let projection_view_matrix_uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
-        label: Some("Uniform Buffer"),
-        contents: bytemuck::cast_slice(
-            generate_matrix(config.width as f32 / config.height as f32, &camera).as_ref(),
-        ),
-        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-    });
-    let mut player_chunk = ChunkPosition::from_chunk_index(IVec3::ZERO);
-    let player_chunk_uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
-        label: Some("Uniform Buffer"),
-        contents: bytemuck::cast_slice(player_chunk.block().index().extend(0).as_ref()),
-        usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-    });
-
-    let blocks = BlockTexture::from_bitmap_bytes(
-        &device,
-        &queue,
-        include_bytes!("blocks.bmp"),
-        "blocks.bmp",
-    );
-
-    let bind_group = device.create_bind_group(&BindGroupDescriptor {
-        layout: &bind_group_layout,
-        entries: &[
-            BindGroupEntry {
-                binding: 0,
-                resource: projection_view_matrix_uniform_buffer.as_entire_binding(),
-            },
-            BindGroupEntry {
-                binding: 1,
-                resource: player_chunk_uniform_buffer.as_entire_binding(),
-            },
-            BindGroupEntry {
-                binding: 2,
-                resource: BindingResource::TextureView(&blocks.view),
-            },
-            BindGroupEntry {
-                binding: 3,
-                resource: BindingResource::Sampler(&blocks.sampler),
-            },
-        ],
-        label: None,
-    });
-
-    let mut depth = create_depth_texture(&device, &config);
-
-    #[cfg(not(feature = "reload"))]
-    let render_pipeline = create_chunk_shader_and_render_pipeline(
-        &device,
-        &pipeline_layout,
-        swapchain_format.into(),
-        include_str!("shader.wgsl"),
-    );
-
-    #[cfg(feature = "reload")]
-    let mut render_pipeline_reloader = reload::Reloader::new(file!(), "shader.wgsl");
-    #[cfg(feature = "reload")]
-    let mut render_pipeline = None;
-
-    let delta_time = Duration::from_millis(16).as_secs_f32();
-
-    let mut world = World::new(12, 16);
-    let mut terrain = TerrainGenerator::new(seed);
-
-    let mut start = Timer::now();
-
-    let mut fingers = HashMap::new();
-    let mut is_locked = false;
-    let mut print_statistics = true;
+    let mut renderer_state = RendererState::new(window, worker).await;
 
     #[cfg(target_arch = "wasm32")]
     let run_event_loop = {
@@ -372,390 +832,7 @@ pub async fn renderer(worker: &mut impl Worker) {
 
     run_event_loop(
         move |event: Event<()>, target: &EventLoopWindowTarget<()>| {
-            let id = window.id();
-            match event {
-                Event::WindowEvent { event, window_id } if window_id == id => {
-                    match event {
-                        WindowEvent::Resized(new_size) => {
-                            config.width = new_size.width.max(MIN_SURFACE_SIZE);
-                            config.height = new_size.height.max(MIN_SURFACE_SIZE);
-                            surface.configure(&device, &config);
-                            depth = create_depth_texture(&device, &config);
-
-                            // necessary on macos, according to hello triangle example
-                            window.request_redraw();
-                        }
-                        WindowEvent::CloseRequested => {
-                            target.exit();
-                        }
-                        WindowEvent::RedrawRequested => {
-                            window.request_redraw();
-
-                            #[cfg(target_arch = "wasm32")]
-                            if is_locked
-                                && web_sys::window()
-                                    .unwrap()
-                                    .document()
-                                    .unwrap()
-                                    .pointer_lock_element()
-                                    .is_none()
-                            {
-                                // without this we would have to hit esc twice
-                                info!("Lost pointer grab");
-                                window.set_cursor_grab(CursorGrabMode::None).unwrap();
-                                is_locked = false;
-                            }
-
-                            #[cfg(feature = "reload")]
-                            if let Some(changed) = render_pipeline_reloader.get_changed_content() {
-                                render_pipeline = match reload::validate_shader(
-                                    changed,
-                                    &device.features(),
-                                    &device.limits(),
-                                    "shader.wgsl",
-                                    &["vs_main", "fs_main"],
-                                ) {
-                                    Ok(source) => Some(create_chunk_shader_and_render_pipeline(
-                                        &device,
-                                        &pipeline_layout,
-                                        swapchain_format.into(),
-                                        source,
-                                    )),
-                                    Err(e) => {
-                                        log::error!("Error while re-loading shader: {e}");
-                                        None
-                                    }
-                                }
-                            }
-                            #[cfg(feature = "reload")]
-                            let render_pipeline = if let Some(pipeline) = &render_pipeline {
-                                pipeline
-                            } else {
-                                return;
-                            };
-
-                            world.generate_chunks(&mut terrain, &mut statistics, player_chunk);
-                            world.update_meshes(
-                                &device,
-                                &queue,
-                                &chunk_bind_group_layout,
-                                &mut statistics,
-                            );
-
-                            let frame = surface
-                                .get_current_texture()
-                                .expect("Failed to acquire next swap chain texture");
-                            let view = frame.texture.create_view(&TextureViewDescriptor::default());
-                            let mut encoder = device
-                                .create_command_encoder(&CommandEncoderDescriptor { label: None });
-
-                            let chunk_offset =
-                                BlockPosition::new(camera.position.floor().as_ivec3())
-                                    .chunk()
-                                    .index();
-                            if chunk_offset != IVec3::ZERO {
-                                player_chunk = player_chunk.plus(chunk_offset);
-                                camera.position -= (chunk_offset * Chunk::SIZE as i32).as_vec3();
-                                queue.write_buffer(
-                                    &player_chunk_uniform_buffer,
-                                    0,
-                                    &bytemuck::cast_slice(
-                                        player_chunk.block().index().extend(0).as_ref(),
-                                    ),
-                                );
-                            }
-                            // must happen after the player chunk uniform update to avoid one invalid frame
-                            let projection_view_matrix = generate_matrix(
-                                config.width as f32 / config.height as f32,
-                                &camera,
-                            );
-                            queue.write_buffer(
-                                &projection_view_matrix_uniform_buffer,
-                                0,
-                                &bytemuck::cast_slice(projection_view_matrix.as_ref()),
-                            );
-
-                            {
-                                let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                                    label: Some("render world"),
-                                    color_attachments: &[Some(RenderPassColorAttachment {
-                                        view: &view,
-                                        resolve_target: None,
-                                        ops: Operations {
-                                            load: LoadOp::Clear(Color {
-                                                r: 238.0 / 255.0,
-                                                g: 238.0 / 255.0,
-                                                b: 238.0 / 255.0,
-                                                a: 1.0,
-                                            }),
-                                            store: StoreOp::Store,
-                                        },
-                                    })],
-                                    depth_stencil_attachment: Some(
-                                        RenderPassDepthStencilAttachment {
-                                            view: &depth.1,
-                                            depth_ops: Some(Operations {
-                                                load: LoadOp::Clear(1.0),
-                                                store: StoreOp::Store,
-                                            }),
-                                            stencil_ops: None,
-                                        },
-                                    ),
-                                    timestamp_writes: None,
-                                    occlusion_query_set: None,
-                                });
-
-                                pass.push_debug_group("chunks setup");
-                                pass.set_pipeline(&render_pipeline);
-                                pass.set_bind_group(0, &bind_group, &[]);
-                                pass.pop_debug_group();
-                                pass.insert_debug_marker("before chunks");
-
-                                for (position, mesh) in world.iter_chunk_meshes() {
-                                    pass.push_debug_group(&format!("Blocks of chunk {position:?}"));
-                                    pass.set_index_buffer(
-                                        mesh.index_buffer.slice(..),
-                                        IndexFormat::Uint16,
-                                    );
-                                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                    pass.set_bind_group(1, &mesh.bind_group, &[]);
-                                    pass.pop_debug_group();
-                                    pass.insert_debug_marker(&format!(
-                                        "Drawing chunk {position:?}"
-                                    ));
-                                    pass.draw_indexed(0..mesh.index_count as u32, 0, 0..1);
-                                }
-                            }
-
-                            queue.submit(Some(encoder.finish()));
-                            frame.present();
-
-                            let frame_time = start.elapsed();
-                            start += frame_time;
-
-                            statistics.end_frame(FrameInfo {
-                                player_position: player_chunk.block().index().as_vec3()
-                                    + camera.position,
-                                player_orientation: camera.computed_vectors().direction,
-                                frame_time,
-                                chunk_info_count: statistics.chunk_infos.len(),
-                                chunk_mesh_info_count: statistics.chunk_mesh_infos.len(),
-                            });
-
-                            if print_statistics {
-                                #[cfg(target_arch = "wasm32")]
-                                wasm::display_statistics(&statistics);
-                                #[cfg(not(target_arch = "wasm32"))]
-                                {
-                                    println!();
-                                    statistics
-                                        .print_last_frame(&mut std::io::stdout().lock())
-                                        .unwrap();
-                                }
-                            }
-                        }
-                        WindowEvent::Focused(_) => {
-                            // TODO winit bug? changing cursor grab mode here didn't work. the cursor gets stuck when reentering after alt-tab
-                        }
-                        WindowEvent::MouseInput { state, button, .. } => {
-                            if is_locked
-                                && state == ElementState::Pressed
-                                && button == MouseButton::Left
-                            {
-                                let vs = camera.computed_vectors();
-                                if let (_, Some(position)) = world.find_nearest_block_on_ray(
-                                    player_chunk,
-                                    camera.position,
-                                    vs.direction,
-                                    200,
-                                ) {
-                                    info!("set_block {position:?}");
-                                    world.set_block(position, Block::Air);
-                                }
-                            }
-                            if is_locked
-                                && state == ElementState::Pressed
-                                && button == MouseButton::Right
-                            {
-                                let vs = camera.computed_vectors();
-                                if let (Some(position), _) = world.find_nearest_block_on_ray(
-                                    player_chunk,
-                                    camera.position,
-                                    vs.direction,
-                                    200,
-                                ) {
-                                    info!("set_block {position:?}");
-                                    world.set_block(position, Block::Dirt);
-                                }
-                            }
-
-                            // TODO account for device_id
-                            if !is_locked
-                                && state == ElementState::Pressed
-                                && (button == MouseButton::Left || button == MouseButton::Right)
-                            {
-                                info!("Locking cursor");
-                                match window.set_cursor_grab(CursorGrabMode::Locked) {
-                                Ok(()) => {
-                                    is_locked = true;
-                                }
-                                Err(e) => todo!("Lock cursor manually with set_position for x11 and windows? {e}")
-                            }
-                            }
-                        }
-                        WindowEvent::Touch(Touch {
-                            device_id,
-                            phase,
-                            location,
-                            force: _,
-                            id,
-                        }) => {
-                            let id = (device_id, id);
-                            match phase {
-                                TouchPhase::Started => {
-                                    fingers.insert(id, location);
-                                    if fingers.len() == 2 {
-                                        let vs = camera.computed_vectors();
-                                        if let (_, Some(position)) = world
-                                            .find_nearest_block_on_ray(
-                                                player_chunk,
-                                                camera.position,
-                                                vs.direction,
-                                                200,
-                                            )
-                                        {
-                                            info!("explode {position:?}");
-                                            let r = 10;
-                                            for x in 0..2 * r {
-                                                for y in 0..2 * r {
-                                                    for z in 0..2 * r {
-                                                        let delta = IVec3::new(x, y, z) - r;
-                                                        if delta.length_squared() <= r * r {
-                                                            world.set_block(
-                                                                position.plus(delta),
-                                                                Block::Air,
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                TouchPhase::Moved => {
-                                    let old = fingers.insert(id, location).unwrap();
-                                    let dx = location.x - old.x;
-                                    let dy = location.y - old.y;
-
-                                    let speed = delta_time * 0.1;
-                                    camera.turn_right(-dx as f32 * speed);
-                                    camera.turn_up(dy as f32 * speed);
-                                }
-                                TouchPhase::Ended | TouchPhase::Cancelled => {
-                                    fingers.remove(&id).unwrap();
-                                }
-                            }
-                        }
-                        WindowEvent::KeyboardInput { event, .. } => {
-                            if is_locked && event.logical_key == Key::Named(NamedKey::Escape) {
-                                info!("Unlocking cursor");
-                                window.set_cursor_grab(CursorGrabMode::None).unwrap();
-                                is_locked = false;
-                            }
-                            let speed = delta_time * 100.0;
-                            if let Key::Character(str) = event.logical_key {
-                                let vectors = camera.computed_vectors();
-                                match str.as_str() {
-                                    "w" => camera.position += vectors.direction * speed,
-                                    "a" => camera.position -= vectors.right * speed,
-                                    "s" => camera.position -= vectors.direction * speed,
-                                    "d" => camera.position += vectors.right * speed,
-                                    "p" => {
-                                        if event.state.is_pressed() {
-                                            print_statistics ^= true;
-                                            #[cfg(target_arch = "wasm32")]
-                                            if !print_statistics {
-                                                wasm::hide_statistics();
-                                            }
-                                        }
-                                    }
-                                    "q" => {
-                                        if event.state.is_pressed() {
-                                            let vs = camera.computed_vectors();
-                                            if let (_, Some(position)) = world
-                                                .find_nearest_block_on_ray(
-                                                    player_chunk,
-                                                    camera.position,
-                                                    vs.direction,
-                                                    200,
-                                                )
-                                            {
-                                                info!("explode {position:?}");
-                                                let r = 10;
-                                                for x in 0..2 * r {
-                                                    for y in 0..2 * r {
-                                                        for z in 0..2 * r {
-                                                            let delta = IVec3::new(x, y, z) - r;
-                                                            if delta.length_squared() <= r * r {
-                                                                world.set_block(
-                                                                    position.plus(delta),
-                                                                    Block::Air,
-                                                                );
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    "e" => {
-                                        if event.state.is_pressed() {
-                                            let vs = camera.computed_vectors();
-                                            if let (Some(position), _) = world
-                                                .find_nearest_block_on_ray(
-                                                    player_chunk,
-                                                    camera.position,
-                                                    vs.direction,
-                                                    200,
-                                                )
-                                            {
-                                                info!("anti-explode {position:?}");
-                                                let r = 10;
-                                                for x in 0..2 * r {
-                                                    for y in 0..2 * r {
-                                                        for z in 0..2 * r {
-                                                            let delta = IVec3::new(x, y, z) - r;
-                                                            if delta.length_squared() <= r * r {
-                                                                world.set_block(
-                                                                    position.plus(delta),
-                                                                    Block::Dirt,
-                                                                );
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                Event::DeviceEvent { event, .. } => match event {
-                    DeviceEvent::MouseMotion { delta } => {
-                        if is_locked && window.has_focus() {
-                            let speed = delta_time * 0.1;
-                            camera.turn_right(delta.0 as f32 * speed);
-                            camera.turn_up(-delta.1 as f32 * speed);
-                        }
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
+            renderer_state.process_event(event, target);
         },
     );
 }
