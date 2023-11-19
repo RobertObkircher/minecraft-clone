@@ -25,6 +25,20 @@ pub trait Worker {
 
 thread_local! {static WORKER_STATE: RefCell<Option<State>> = RefCell::new(None); }
 
+pub fn set_renderer_state(s: RendererState) {
+    WORKER_STATE.with_borrow_mut(|state| {
+        assert!(state.is_none());
+        *state = Some(State::Renderer(s));
+    })
+}
+
+pub fn with_renderer_state<F: FnOnce(&mut RendererState)>(f: F) {
+    WORKER_STATE.with_borrow_mut(|s| match s {
+        Some(State::Renderer(s)) => f(s),
+        _ => unreachable!(),
+    });
+}
+
 enum State {
     Renderer(RendererState),
     Simulation(SimulationState),

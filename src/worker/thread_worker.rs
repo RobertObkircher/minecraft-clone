@@ -27,7 +27,7 @@ fn run_thread(mut w: ThreadWorker) {
 
 pub struct ThreadWorker {
     for_others: Option<Sender<WorkerMessage>>,
-    incoming: Receiver<WorkerMessage>,
+    pub incoming: Receiver<WorkerMessage>,
     parent: Option<(NonZeroU32, Sender<WorkerMessage>)>,
     children: Vec<Sender<WorkerMessage>>,
 }

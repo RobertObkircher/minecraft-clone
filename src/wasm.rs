@@ -1,6 +1,7 @@
 use crate::statistics::Statistics;
 use crate::worker::web_worker::WebWorker;
-use crate::worker::{WorkerId, WorkerMessage};
+use crate::worker::{set_renderer_state, with_renderer_state, WorkerId, WorkerMessage};
+use crate::RendererState;
 use log::{Level, Log, Metadata, Record};
 use std::num::NonZeroU32;
 use std::panic::PanicInfo;
@@ -8,7 +9,8 @@ use std::time::Duration;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 use web_sys::Element;
-use winit::platform::web::WindowExtWebSys;
+use winit::event_loop::EventLoop;
+use winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys};
 use winit::window::Window;
 
 #[wasm_bindgen(start)]
@@ -21,7 +23,32 @@ pub fn wasm_start() {
 #[wasm_bindgen]
 pub async fn wasm_renderer() {
     let mut worker = WebWorker;
-    crate::renderer(&mut worker).await;
+
+    let event_loop = EventLoop::new().unwrap();
+
+    let winit_window = Window::new(&event_loop).unwrap();
+
+    {
+        let document = web_sys::window().unwrap().document().unwrap();
+        let body = document.body().unwrap();
+
+        let canvas = winit_window.canvas().unwrap();
+        let canvas = Element::from(canvas);
+        body.append_child(&canvas).unwrap();
+    }
+
+    let state = RendererState::new(winit_window, &mut worker).await;
+    set_renderer_state(state);
+
+    // This only registers callbacks and returns immediately,
+    // because we must not block the javascript event loop.
+    // If we called run instead then winit would force the immediate
+    // return with a javascript exception.
+    event_loop.spawn(|event, target| {
+        with_renderer_state(|state| {
+            state.process_event(event, target);
+        })
+    });
 }
 
 #[wasm_bindgen]
@@ -48,16 +75,6 @@ fn to_millis(duration: Option<Duration>) -> i32 {
     duration
         .map(|it| i32::try_from(it.as_millis()).unwrap())
         .unwrap_or(-1)
-}
-
-pub fn setup_window(winit_window: &Window) {
-    let window = web_sys::window().unwrap();
-    let document = window.document().unwrap();
-    let body = document.body().unwrap();
-
-    let canvas = winit_window.canvas().unwrap();
-    let canvas = Element::from(canvas);
-    body.append_child(&canvas).unwrap();
 }
 
 fn set_statistics(text_content: Option<&str>) {

@@ -21,13 +21,13 @@ use wgpu::{
     Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
     TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
-use winit::dpi::{LogicalSize, PhysicalPosition};
+use winit::dpi::PhysicalPosition;
 use winit::event::{
     DeviceEvent, DeviceId, ElementState, Event, MouseButton, Touch, TouchPhase, WindowEvent,
 };
-use winit::event_loop::{EventLoop, EventLoopWindowTarget};
+use winit::event_loop::EventLoopWindowTarget;
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{CursorGrabMode, Window, WindowBuilder};
+use winit::window::{CursorGrabMode, Window};
 
 use crate::camera::Camera;
 use crate::chunk::{Block, Chunk};
@@ -203,9 +203,6 @@ impl RendererState {
             *message.last_mut().unwrap() = MessageTag::InitSimulation as u8;
             worker.send_message(simulation, Box::new(message));
         }
-
-        #[cfg(target_arch = "wasm32")]
-        wasm::setup_window(&window);
 
         let statistics = Statistics::new();
 
@@ -804,37 +801,6 @@ impl RendererState {
             _ => {}
         }
     }
-}
-pub async fn renderer(worker: &mut impl Worker) {
-    info!("Hello, world!");
-
-    let event_loop = EventLoop::new().unwrap();
-
-    let window = WindowBuilder::new()
-        .with_title("Hello, world!")
-        .with_inner_size(LogicalSize::new(800.0, 600.0)) // doesn't affect wasm canvas
-        .build(&event_loop)
-        .unwrap();
-
-    let mut renderer_state = RendererState::new(window, worker).await;
-
-    #[cfg(target_arch = "wasm32")]
-    let run_event_loop = {
-        // In the browser we must not block the main javascript event loop.
-        // Winit just registers callbacks so that we can return immediately.
-        // If we called run instead it would "force" the return by throwing
-        // an exception.
-        use winit::platform::web::EventLoopExtWebSys;
-        |closure| event_loop.spawn(closure)
-    };
-    #[cfg(not(target_arch = "wasm32"))]
-    let run_event_loop = |closure| event_loop.run(closure).unwrap();
-
-    run_event_loop(
-        move |event: Event<()>, target: &EventLoopWindowTarget<()>| {
-            renderer_state.process_event(event, target);
-        },
-    );
 }
 
 fn create_chunk_shader_and_render_pipeline(
