@@ -53,25 +53,22 @@ pub async fn wasm_renderer() {
 
 #[wasm_bindgen]
 pub fn wasm_update() -> i32 {
-    let mut worker = WebWorker;
-    to_millis(crate::worker::update(&mut worker, None))
+    update(None)
 }
 
 #[wasm_bindgen]
 pub fn wasm_update_with_message(id: u32, message: Box<[u8]>) -> i32 {
-    let mut worker = WebWorker;
-    to_millis(crate::worker::update(
-        &mut worker,
-        Some(WorkerMessage {
-            sender: NonZeroU32::try_from(id)
-                .map(WorkerId::Child)
-                .unwrap_or(WorkerId::Parent),
-            bytes: message,
-        }),
-    ))
+    update(Some(WorkerMessage {
+        sender: NonZeroU32::try_from(id)
+            .map(WorkerId::Child)
+            .unwrap_or(WorkerId::Parent),
+        bytes: message,
+    }))
 }
 
-fn to_millis(duration: Option<Duration>) -> i32 {
+fn update(message: Option<WorkerMessage>) -> i32 {
+    let mut worker = WebWorker;
+    let duration = crate::worker::update(&mut worker, message);
     duration
         .map(|it| i32::try_from(it.as_millis()).unwrap())
         .unwrap_or(-1)
