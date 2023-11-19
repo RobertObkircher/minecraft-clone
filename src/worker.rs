@@ -4,10 +4,11 @@ pub mod thread_worker;
 pub mod web_worker;
 
 use std::cell::RefCell;
+use std::mem;
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::time::Duration;
 
-use bytemuck::Contiguous;
+use bytemuck::{AnyBitPattern, Contiguous};
 
 use crate::{GeneratorState, RendererState, SimulationState};
 
@@ -54,15 +55,37 @@ impl WorkerMessage {
     pub fn tag(&self) -> MessageTag {
         Contiguous::from_integer(*self.bytes.last().unwrap()).unwrap()
     }
+
+    pub fn take<'a, T: AnyBitPattern>(bytes: &mut &'a [u8]) -> Option<&'a T> {
+        let n = mem::size_of::<T>();
+        if bytes.len() < n {
+            None
+        } else {
+            let result = bytes.split_at(n);
+            *bytes = result.1;
+            Some(bytemuck::from_bytes::<T>(result.0))
+        }
+    }
+    pub fn take_slice<'a, T: AnyBitPattern>(bytes: &mut &'a [u8], count: usize) -> Option<&'a [T]> {
+        let n = mem::size_of::<T>() * count;
+        if bytes.len() < n {
+            None
+        } else {
+            let result = bytes.split_at(n);
+            *bytes = result.1;
+            Some(bytemuck::cast_slice::<u8, T>(result.0))
+        }
+    }
 }
 
 #[repr(u8)]
-#[derive(Contiguous, Copy, Clone, Eq, PartialEq)]
+#[derive(Contiguous, Copy, Clone, Debug, Eq, PartialEq)]
 pub enum MessageTag {
     InitSimulation,
     InitGenerator,
     GenerateColumn,
     GenerateColumnReply,
+    MeshData,
 }
 
 pub fn update(worker: &mut impl Worker, message: Option<WorkerMessage>) -> Option<Duration> {
@@ -77,9 +100,8 @@ pub fn update(worker: &mut impl Worker, message: Option<WorkerMessage>) -> Optio
         }
         if tag == Some(MessageTag::InitGenerator) {
             let message = message.unwrap();
-            *state = Some(State::Generator(GeneratorState::initialize(
-                worker, message,
-            )));
+            let s = GeneratorState::initialize(worker, message);
+            *state = Some(State::Generator(s));
             return None;
         }
 

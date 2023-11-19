@@ -4,7 +4,8 @@ use bytemuck::{Contiguous, Pod, Zeroable};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
-use std::mem::size_of;
+use std::io::Read;
+use std::mem::{size_of, size_of_val};
 use std::time::Duration;
 
 use glam::{IVec3, Mat4, Vec3};
@@ -33,9 +34,9 @@ use winit::window::{CursorGrabMode, Window};
 
 use crate::camera::Camera;
 use crate::chunk::{Block, Chunk};
-use crate::mesh::ChunkMesh;
+use crate::mesh::{ChunkMesh, Vertex};
 use crate::position::{BlockPosition, ChunkPosition};
-use crate::statistics::{ChunkInfo, FrameInfo, Statistics};
+use crate::statistics::{FrameInfo, Statistics};
 use crate::terrain::{TerrainGenerator, WorldSeed};
 use crate::texture::BlockTexture;
 use crate::timer::Timer;
@@ -68,7 +69,7 @@ fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
     projection * view
 }
 
-struct SimulationState {
+pub struct SimulationState {
     seed: WorldSeed,
     world: World,
     workers: Vec<WorkerId>,
@@ -133,26 +134,25 @@ impl SimulationState {
 
     pub fn update(
         &mut self,
-        _worker: &mut impl Worker,
+        worker: &impl Worker,
         message: Option<WorkerMessage>,
     ) -> Option<Duration> {
         let tag = message.as_ref().map(WorkerMessage::tag);
 
         if tag == Some(MessageTag::GenerateColumnReply) {
             let message = message.unwrap();
-            let x = *bytemuck::from_bytes::<i32>(&message.bytes[0..4]);
-            let z = *bytemuck::from_bytes::<i32>(&message.bytes[4..8]);
+            let mut remainder = &*message.bytes;
 
-            let mut remainder = &message.bytes[8..];
+            let x = *WorkerMessage::take::<i32>(&mut remainder).unwrap();
+            let z = *WorkerMessage::take::<i32>(&mut remainder).unwrap();
 
             for y in self.world.lowest_generated_chunk..=self.world.highest_generated_chunk {
                 let is_some = remainder[0];
                 let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
 
                 if is_some == 1 {
-                    let element = bytemuck::from_bytes::<ChunkColumnElement>(
-                        &remainder[0..size_of::<ChunkColumnElement>()],
-                    );
+                    let element =
+                        WorkerMessage::take::<ChunkColumnElement>(&mut remainder).unwrap();
                     let chunk = Chunk {
                         blocks: element
                             .blocks
@@ -162,11 +162,38 @@ impl SimulationState {
                         non_air_block_count: element.non_air_block_count,
                     };
                     self.world.add_chunk(position, chunk);
-                    remainder = &remainder[size_of::<ChunkColumnElement>()..];
                 } else {
                     self.world.add_air_chunk(position);
                     remainder = &remainder[2..];
                 }
+            }
+
+            let meshes = self.world.get_updated_meshes();
+            if meshes.len() > 0 {
+                let total_size = meshes
+                    .iter()
+                    .map(|it| {
+                        size_of_val(&it.0)
+                            + size_of_val(it.1.as_slice())
+                            + size_of_val(it.2.as_slice())
+                            + if it.2.len() % 2 == 0 { 0 } else { 2 }
+                    })
+                    .sum::<usize>();
+
+                let mut message = Vec::with_capacity(total_size + 1);
+                for (mesh_data, vertices, indices) in meshes {
+                    message.extend_from_slice(bytemuck::bytes_of(&mesh_data));
+                    message.extend_from_slice(bytemuck::cast_slice(&vertices));
+                    message.extend_from_slice(bytemuck::cast_slice(&indices));
+                    if indices.len() % 2 != 0 {
+                        message.extend_from_slice(&[0, 0]); // align
+                    }
+                }
+                debug_assert_eq!(message.len(), total_size);
+                message.push(MessageTag::MeshData as u8);
+
+                let message = message.into_boxed_slice();
+                worker.send_message(WorkerId::Parent, message);
             }
         }
 
@@ -174,7 +201,7 @@ impl SimulationState {
     }
 }
 
-struct GeneratorState {
+pub struct GeneratorState {
     generator: TerrainGenerator,
     highest_generated_chunk: i32,
     lowest_generated_chunk: i32,
@@ -203,7 +230,7 @@ impl GeneratorState {
     }
     pub fn update(
         &mut self,
-        worker: &mut impl Worker,
+        worker: &impl Worker,
         message: Option<WorkerMessage>,
     ) -> Option<Duration> {
         let tag = message.as_ref().map(WorkerMessage::tag);
@@ -296,8 +323,7 @@ pub struct RendererState {
     bind_group: BindGroup,
     chunk_bind_group_layout: BindGroupLayout,
     statistics: Statistics,
-    world: World,
-    terrain: TerrainGenerator,
+    meshes: HashMap<ChunkPosition, ChunkMesh>,
     camera: Camera,
     projection_view_matrix_uniform_buffer: Buffer,
     player_chunk: ChunkPosition,
@@ -312,8 +338,13 @@ pub struct RendererState {
     window: Window,
 }
 
-impl RendererState {
-    pub fn update(&mut self, _worker: &mut impl Worker, _message: Option<WorkerMessage>) {}
+#[repr(C)]
+#[derive(Copy, Clone, Zeroable, Pod)]
+pub struct MeshData {
+    chunk: [i32; 3],
+    vertex_count: u32,
+    index_count: u32,
+    is_full_and_invisible: u32,
 }
 
 impl RendererState {
@@ -497,9 +528,6 @@ impl RendererState {
         #[cfg(feature = "reload")]
         let render_pipeline = None;
 
-        let world = World::new(12, 16);
-        let terrain = TerrainGenerator::new(seed);
-
         let start = Timer::now();
         // TODO compute delta_time
         let delta_time = Duration::from_millis(16).as_secs_f32();
@@ -518,8 +546,7 @@ impl RendererState {
             bind_group,
             chunk_bind_group_layout,
             statistics,
-            world,
-            terrain,
+            meshes: HashMap::new(),
             camera,
             projection_view_matrix_uniform_buffer,
             player_chunk,
@@ -599,18 +626,6 @@ impl RendererState {
                         #[cfg(not(feature = "reload"))]
                         let render_pipeline = &self.render_pipeline;
 
-                        self.world.generate_chunks(
-                            &mut self.terrain,
-                            &mut self.statistics,
-                            self.player_chunk,
-                        );
-                        self.world.update_meshes(
-                            &self.device,
-                            &self.queue,
-                            &self.chunk_bind_group_layout,
-                            &mut self.statistics,
-                        );
-
                         let frame = self
                             .surface
                             .get_current_texture()
@@ -680,7 +695,7 @@ impl RendererState {
                             pass.pop_debug_group();
                             pass.insert_debug_marker("before chunks");
 
-                            for (position, mesh) in self.world.iter_chunk_meshes() {
+                            for (position, mesh) in self.meshes.iter() {
                                 pass.push_debug_group(&format!("Blocks of chunk {position:?}"));
                                 pass.set_index_buffer(
                                     mesh.index_buffer.slice(..),
@@ -725,36 +740,36 @@ impl RendererState {
                         // TODO winit bug? changing cursor grab mode here didn't work. the cursor gets stuck when reentering after alt-tab
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
-                        if self.is_locked
-                            && state == ElementState::Pressed
-                            && button == MouseButton::Left
-                        {
-                            let vs = self.camera.computed_vectors();
-                            if let (_, Some(position)) = self.world.find_nearest_block_on_ray(
-                                self.player_chunk,
-                                self.camera.position,
-                                vs.direction,
-                                200,
-                            ) {
-                                info!("set_block {position:?}");
-                                self.world.set_block(position, Block::Air);
-                            }
-                        }
-                        if self.is_locked
-                            && state == ElementState::Pressed
-                            && button == MouseButton::Right
-                        {
-                            let vs = self.camera.computed_vectors();
-                            if let (Some(position), _) = self.world.find_nearest_block_on_ray(
-                                self.player_chunk,
-                                self.camera.position,
-                                vs.direction,
-                                200,
-                            ) {
-                                info!("set_block {position:?}");
-                                self.world.set_block(position, Block::Dirt);
-                            }
-                        }
+                        // if self.is_locked
+                        //     && state == ElementState::Pressed
+                        //     && button == MouseButton::Left
+                        // {
+                        //     let vs = self.camera.computed_vectors();
+                        //     if let (_, Some(position)) = self.world.find_nearest_block_on_ray(
+                        //         self.player_chunk,
+                        //         self.camera.position,
+                        //         vs.direction,
+                        //         200,
+                        //     ) {
+                        //         info!("set_block {position:?}");
+                        //         self.world.set_block(position, Block::Air);
+                        //     }
+                        // }
+                        // if self.is_locked
+                        //     && state == ElementState::Pressed
+                        //     && button == MouseButton::Right
+                        // {
+                        //     let vs = self.camera.computed_vectors();
+                        //     if let (Some(position), _) = self.world.find_nearest_block_on_ray(
+                        //         self.player_chunk,
+                        //         self.camera.position,
+                        //         vs.direction,
+                        //         200,
+                        //     ) {
+                        //         info!("set_block {position:?}");
+                        //         self.world.set_block(position, Block::Dirt);
+                        //     }
+                        // }
 
                         // TODO account for device_id
                         if !self.is_locked
@@ -782,31 +797,31 @@ impl RendererState {
                             TouchPhase::Started => {
                                 self.fingers.insert(id, location);
                                 if self.fingers.len() == 2 {
-                                    let vs = self.camera.computed_vectors();
-                                    if let (_, Some(position)) =
-                                        self.world.find_nearest_block_on_ray(
-                                            self.player_chunk,
-                                            self.camera.position,
-                                            vs.direction,
-                                            200,
-                                        )
-                                    {
-                                        info!("explode {position:?}");
-                                        let r = 10;
-                                        for x in 0..2 * r {
-                                            for y in 0..2 * r {
-                                                for z in 0..2 * r {
-                                                    let delta = IVec3::new(x, y, z) - r;
-                                                    if delta.length_squared() <= r * r {
-                                                        self.world.set_block(
-                                                            position.plus(delta),
-                                                            Block::Air,
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                    // let vs = self.camera.computed_vectors();
+                                    // if let (_, Some(position)) =
+                                    //     self.world.find_nearest_block_on_ray(
+                                    //         self.player_chunk,
+                                    //         self.camera.position,
+                                    //         vs.direction,
+                                    //         200,
+                                    //     )
+                                    // {
+                                    //     info!("explode {position:?}");
+                                    //     let r = 10;
+                                    //     for x in 0..2 * r {
+                                    //         for y in 0..2 * r {
+                                    //             for z in 0..2 * r {
+                                    //                 let delta = IVec3::new(x, y, z) - r;
+                                    //                 if delta.length_squared() <= r * r {
+                                    //                     self.world.set_block(
+                                    //                         position.plus(delta),
+                                    //                         Block::Air,
+                                    //                     );
+                                    //                 }
+                                    //             }
+                                    //         }
+                                    //     }
+                                    // }
                                 }
                             }
                             TouchPhase::Moved => {
@@ -848,60 +863,60 @@ impl RendererState {
                                 }
                                 "q" => {
                                     if event.state.is_pressed() {
-                                        let vs = self.camera.computed_vectors();
-                                        if let (_, Some(position)) =
-                                            self.world.find_nearest_block_on_ray(
-                                                self.player_chunk,
-                                                self.camera.position,
-                                                vs.direction,
-                                                200,
-                                            )
-                                        {
-                                            info!("explode {position:?}");
-                                            let r = 10;
-                                            for x in 0..2 * r {
-                                                for y in 0..2 * r {
-                                                    for z in 0..2 * r {
-                                                        let delta = IVec3::new(x, y, z) - r;
-                                                        if delta.length_squared() <= r * r {
-                                                            self.world.set_block(
-                                                                position.plus(delta),
-                                                                Block::Air,
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        // let vs = self.camera.computed_vectors();
+                                        // if let (_, Some(position)) =
+                                        //     self.world.find_nearest_block_on_ray(
+                                        //         self.player_chunk,
+                                        //         self.camera.position,
+                                        //         vs.direction,
+                                        //         200,
+                                        //     )
+                                        // {
+                                        //     info!("explode {position:?}");
+                                        //     let r = 10;
+                                        //     for x in 0..2 * r {
+                                        //         for y in 0..2 * r {
+                                        //             for z in 0..2 * r {
+                                        //                 let delta = IVec3::new(x, y, z) - r;
+                                        //                 if delta.length_squared() <= r * r {
+                                        //                     self.world.set_block(
+                                        //                         position.plus(delta),
+                                        //                         Block::Air,
+                                        //                     );
+                                        //                 }
+                                        //             }
+                                        //         }
+                                        //     }
+                                        // }
                                     }
                                 }
                                 "e" => {
                                     if event.state.is_pressed() {
-                                        let vs = self.camera.computed_vectors();
-                                        if let (Some(position), _) =
-                                            self.world.find_nearest_block_on_ray(
-                                                self.player_chunk,
-                                                self.camera.position,
-                                                vs.direction,
-                                                200,
-                                            )
-                                        {
-                                            info!("anti-explode {position:?}");
-                                            let r = 10;
-                                            for x in 0..2 * r {
-                                                for y in 0..2 * r {
-                                                    for z in 0..2 * r {
-                                                        let delta = IVec3::new(x, y, z) - r;
-                                                        if delta.length_squared() <= r * r {
-                                                            self.world.set_block(
-                                                                position.plus(delta),
-                                                                Block::Dirt,
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        // let vs = self.camera.computed_vectors();
+                                        // if let (Some(position), _) =
+                                        //     self.world.find_nearest_block_on_ray(
+                                        //         self.player_chunk,
+                                        //         self.camera.position,
+                                        //         vs.direction,
+                                        //         200,
+                                        //     )
+                                        // {
+                                        //     info!("anti-explode {position:?}");
+                                        //     let r = 10;
+                                        //     for x in 0..2 * r {
+                                        //         for y in 0..2 * r {
+                                        //             for z in 0..2 * r {
+                                        //                 let delta = IVec3::new(x, y, z) - r;
+                                        //                 if delta.length_squared() <= r * r {
+                                        //                     self.world.set_block(
+                                        //                         position.plus(delta),
+                                        //                         Block::Dirt,
+                                        //                     );
+                                        //                 }
+                                        //             }
+                                        //         }
+                                        //     }
+                                        // }
                                     }
                                 }
                                 _ => {}
@@ -922,6 +937,58 @@ impl RendererState {
                 _ => {}
             },
             _ => {}
+        }
+    }
+
+    pub fn update(&mut self, worker: &impl Worker, message: Option<WorkerMessage>) {
+        let tag = message.as_ref().map(|it| it.tag());
+
+        if tag == Some(MessageTag::MeshData) {
+            self.update_mesh_data(worker, message.unwrap());
+        }
+    }
+    pub fn update_mesh_data(&mut self, worker: &impl Worker, message: WorkerMessage) {
+        let mut remaining = &message.bytes[0..];
+
+        while let Some(mesh_data) = WorkerMessage::take::<MeshData>(&mut remaining) {
+            let position = ChunkPosition::from_chunk_index(IVec3::from(mesh_data.chunk));
+            let vertices = WorkerMessage::take_slice::<Vertex>(
+                &mut remaining,
+                mesh_data.vertex_count as usize,
+            )
+            .unwrap();
+            let indices =
+                WorkerMessage::take_slice::<u16>(&mut remaining, mesh_data.index_count as usize)
+                    .unwrap();
+            if mesh_data.index_count % 2 != 0 {
+                WorkerMessage::take::<u16>(&mut remaining).unwrap(); // alignment
+            }
+
+            let previous_mesh = self.meshes.remove(&position);
+            self.statistics.replaced_meshes += previous_mesh.is_some() as usize;
+
+            if mesh_data.is_full_and_invisible != 0 {
+                debug_assert!(indices.len() == 0);
+                self.statistics.full_invisible_chunks += 1;
+            }
+
+            if indices.len() == 0 {
+                // TODO is it worth it to cache the previous_mesh so that it can be recycled later?
+                continue;
+            }
+
+            let (mesh, info) = ChunkMesh::upload_to_gpu(
+                &self.device,
+                position,
+                vertices,
+                indices,
+                &self.chunk_bind_group_layout,
+                previous_mesh.map(|it| (it, &self.queue)),
+            );
+
+            self.statistics.chunk_mesh_generated(info);
+
+            self.meshes.insert(position, mesh);
         }
     }
 }

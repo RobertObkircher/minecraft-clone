@@ -1,14 +1,12 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
 
 use glam::{IVec3, Vec3};
-use wgpu::{BindGroupLayout, Device, Queue};
 
 use crate::chunk::{Block, Chunk, Transparency};
-use crate::mesh::ChunkMesh;
+use crate::mesh::{ChunkMesh, Vertex};
 use crate::position::{BlockPosition, ChunkPosition};
-use crate::statistics::Statistics;
-use crate::terrain::TerrainGenerator;
+use crate::MeshData;
 
 #[allow(unused)]
 pub struct World {
@@ -17,7 +15,7 @@ pub struct World {
     pub lowest_generated_chunk: i32,
     chunks: Vec<Chunk>,
     position_to_index: HashMap<ChunkPosition, ChunkIndex>,
-    position_to_mesh: HashMap<ChunkPosition, ChunkMesh>,
+    position_has_mesh: HashSet<ChunkPosition>,
     generation_queue: VecDeque<(i32, i32, i32)>,
     mesh_queue: VecDeque<ChunkPosition>,
     //simulation_regions: Vec<SimulationRegion>,
@@ -50,9 +48,8 @@ impl World {
             lowest_generated_chunk,
             chunks: vec![chunk],
             position_to_index: Default::default(),
-            position_to_mesh: Default::default(),
+            position_has_mesh: HashSet::default(),
             generation_queue: VecDeque::from(generation_queue),
-
             mesh_queue: VecDeque::new(),
         }
     }
@@ -61,62 +58,24 @@ impl World {
         self.generation_queue.pop_front().map(|(x, _, z)| (x, z))
     }
 
-    pub fn generate_chunks(
-        &mut self,
-        terrain: &mut TerrainGenerator,
-        statistics: &mut Statistics,
-        player_chunk: ChunkPosition,
-    ) {
-        if let Some((x, mut y, z)) = self.generation_queue.pop_front() {
-            while y >= self.lowest_generated_chunk {
-                let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
-                y -= 1;
-
-                if self.get_chunk(position).is_some() {
-                    continue; // guarantee progress even if we would defer it below
-                }
-
-                let (chunk, chunk_info) = terrain.fill_chunk(position);
-                statistics.chunk_generated(chunk_info);
-                if let Some(chunk) = chunk {
-                    self.add_chunk(position, chunk);
-                } else {
-                    statistics.air_chunks += 1;
-                    self.add_air_chunk(position);
-                }
-
-                // defer distant underground chunks
-                if y >= self.lowest_generated_chunk
-                    && position.index().distance_squared(player_chunk.index()) > 5
-                {
-                    if let Some(above) = self.get_chunk(position.plus(IVec3::Y)) {
-                        if above.get_transparency(Transparency::Computed)
-                            && !above.get_transparency(Transparency::NegY)
-                        {
-                            self.generation_queue.push_back((x, y, z));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn update_meshes(
-        &mut self,
-        device: &Device,
-        queue: &Queue,
-        chunk_bind_group_layout: &BindGroupLayout,
-        statistics: &mut Statistics,
-    ) {
+    pub fn get_updated_meshes(&mut self) -> Vec<(MeshData, Vec<Vertex>, Vec<u16>)> {
+        let mut result = Vec::with_capacity(self.mesh_queue.len());
         while let Some(position) = self.mesh_queue.pop_front() {
             self.get_chunk_mut(position, false).unwrap().in_mesh_queue = false;
-            let previous_mesh = self.position_to_mesh.remove(&position);
-            statistics.replaced_meshes += previous_mesh.is_some() as usize;
 
             let chunk = self.get_chunk(position).unwrap();
+
             if chunk.non_air_block_count == 0 {
-                // TODO is it worth it to cache the previous_mesh so that it can be recycled later?
+                result.push((
+                    MeshData {
+                        chunk: position.index().to_array(),
+                        vertex_count: 0,
+                        index_count: 0,
+                        is_full_and_invisible: 0,
+                    },
+                    vec![],
+                    vec![],
+                ));
                 continue; // invisible
             }
 
@@ -134,21 +93,33 @@ impl World {
                 && !neighbours.pos_z.get_transparency(Transparency::NegZ)
                 && !neighbours.neg_z.get_transparency(Transparency::PosZ)
             {
-                statistics.full_invisible_chunks += 1;
+                result.push((
+                    MeshData {
+                        chunk: position.index().to_array(),
+                        vertex_count: 0,
+                        index_count: 0,
+                        is_full_and_invisible: 1,
+                    },
+                    vec![],
+                    vec![],
+                ));
                 continue;
             }
-            let (mesh, info) = ChunkMesh::generate(
-                &device,
-                position,
-                &chunk,
-                neighbours,
-                &chunk_bind_group_layout,
-                previous_mesh.map(|it| (it, queue)),
-            );
-            statistics.chunk_mesh_generated(info);
 
-            self.position_to_mesh.insert(position, mesh);
+            let (vertices, indices) = ChunkMesh::generate(&chunk, neighbours);
+            result.push((
+                MeshData {
+                    chunk: position.index().to_array(),
+                    vertex_count: vertices.len() as u32,
+                    index_count: indices.len() as u32,
+                    is_full_and_invisible: 0,
+                },
+                vertices,
+                indices,
+            ));
         }
+
+        result
     }
 
     pub fn add_chunk(&mut self, position: ChunkPosition, chunk: Chunk) {
@@ -163,10 +134,6 @@ impl World {
         let index = ChunkIndex(0);
         self.position_to_index.insert(position, index);
         self.request_neighbour_mesh_updates(position);
-    }
-
-    pub fn iter_chunk_meshes(&self) -> impl Iterator<Item = (&ChunkPosition, &ChunkMesh)> {
-        self.position_to_mesh.iter()
     }
 
     pub fn get_chunk(&self, position: ChunkPosition) -> Option<&Chunk> {

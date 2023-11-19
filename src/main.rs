@@ -1,4 +1,3 @@
-use minecraft_clone::worker::set_renderer_state;
 use minecraft_clone::worker::thread_worker::ThreadWorker;
 use minecraft_clone::RendererState;
 use std::process::exit;
