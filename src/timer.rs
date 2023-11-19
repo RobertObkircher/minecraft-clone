@@ -2,6 +2,8 @@ use std::ops::AddAssign;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::wasm_bindgen;
 
 /// Unfortunately Instant::now() panics in the browser
 pub struct Timer {
@@ -11,13 +13,24 @@ pub struct Timer {
     value: f64,
 }
 
+#[cfg(target_arch = "wasm32")]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
+extern "C" {
+    type Performance;
+    #[wasm_bindgen (method , structural , js_class = "Performance" , js_name = now)]
+    fn now(this: &Performance) -> f64;
+
+    #[wasm_bindgen(js_name = performance)]
+    static PERFORMANCE: Performance;
+}
+
 impl Timer {
     pub fn now() -> Self {
         Self {
             #[cfg(not(target_arch = "wasm32"))]
             instant: Instant::now(),
             #[cfg(target_arch = "wasm32")]
-            value: web_sys::window().unwrap().performance().unwrap().now(),
+            value: PERFORMANCE.now(),
         }
     }
 
