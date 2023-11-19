@@ -36,7 +36,7 @@ use crate::camera::Camera;
 use crate::chunk::{Block, Chunk};
 use crate::mesh::{ChunkMesh, Vertex};
 use crate::position::{BlockPosition, ChunkPosition};
-use crate::statistics::{FrameInfo, Statistics};
+use crate::statistics::{ChunkInfo, FrameInfo, Statistics};
 use crate::terrain::{TerrainGenerator, WorldSeed};
 use crate::texture::BlockTexture;
 use crate::timer::Timer;
@@ -139,6 +139,10 @@ impl SimulationState {
     ) -> Option<Duration> {
         let tag = message.as_ref().map(WorkerMessage::tag);
 
+        if tag == Some(MessageTag::ChunkInfo) {
+            worker.send_message(WorkerId::Parent, message.unwrap().bytes);
+            return None;
+        }
         if tag == Some(MessageTag::GenerateColumnReply) {
             let message = message.unwrap();
             let mut remainder = &*message.bytes;
@@ -216,6 +220,15 @@ struct ChunkColumnElement {
     blocks: [[[u8; Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE],
 }
 
+#[repr(C)]
+#[derive(Zeroable, Pod, Copy, Clone)]
+struct ChunkInfoBytes {
+    time_secs: u64,
+    time_subsec_nanos: u32,
+    non_air_block_count: u16,
+    padding: u16,
+}
+
 impl GeneratorState {
     pub fn initialize<W: Worker>(_worker: &mut W, message: WorkerMessage) -> Self {
         let seed = *bytemuck::from_bytes(&message.bytes[0..8]);
@@ -248,12 +261,20 @@ impl GeneratorState {
             message.extend_from_slice(bytemuck::bytes_of(&x));
             message.extend_from_slice(bytemuck::bytes_of(&z));
 
+            let mut info_message =
+                Vec::<u8>::with_capacity(count * size_of::<ChunkInfoBytes>() + 1);
+
             for y in self.lowest_generated_chunk..=self.highest_generated_chunk {
                 let (chunk, info) = self
                     .generator
                     .fill_chunk(ChunkPosition::from_chunk_index(IVec3::new(x, y, z)));
 
-                // TODO send chunk infos to render thread
+                info_message.extend_from_slice(bytemuck::bytes_of(&ChunkInfoBytes {
+                    time_secs: info.time.as_secs(),
+                    time_subsec_nanos: info.time.subsec_nanos(),
+                    non_air_block_count: info.non_air_block_count,
+                    padding: 0,
+                }));
 
                 if let Some(chunk) = chunk {
                     message.extend_from_slice(bytemuck::bytes_of(&ChunkColumnElement {
@@ -270,8 +291,10 @@ impl GeneratorState {
 
             message.push(MessageTag::GenerateColumnReply as u8);
             let message = message.into_boxed_slice();
-
             worker.send_message(WorkerId::Parent, message);
+
+            info_message.push(MessageTag::ChunkInfo as u8);
+            worker.send_message(WorkerId::Parent, info_message.into_boxed_slice());
         }
 
         None
@@ -944,10 +967,14 @@ impl RendererState {
         let tag = message.as_ref().map(|it| it.tag());
 
         if tag == Some(MessageTag::MeshData) {
-            self.update_mesh_data(worker, message.unwrap());
+            self.update_mesh_data(message.unwrap());
+        } else if tag == Some(MessageTag::ChunkInfo) {
+            // TODO implement a shortcut in worker.js to avoid coping it in and out of wasm memory?
+            self.update_chunk_info_statistics(message.unwrap());
         }
     }
-    pub fn update_mesh_data(&mut self, worker: &impl Worker, message: WorkerMessage) {
+
+    fn update_mesh_data(&mut self, message: WorkerMessage) {
         let mut remaining = &message.bytes[0..];
 
         while let Some(mesh_data) = WorkerMessage::take::<MeshData>(&mut remaining) {
@@ -990,6 +1017,17 @@ impl RendererState {
 
             self.meshes.insert(position, mesh);
         }
+    }
+
+    fn update_chunk_info_statistics(&mut self, message: WorkerMessage) {
+        let mut remaining = &message.bytes[..];
+        while let Some(info) = WorkerMessage::take::<ChunkInfoBytes>(&mut remaining) {
+            self.statistics.chunk_generated(ChunkInfo {
+                non_air_block_count: info.non_air_block_count,
+                time: Duration::new(info.time_secs, info.time_subsec_nanos),
+            });
+        }
+        assert_eq!(remaining.len(), 1);
     }
 }
 

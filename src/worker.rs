@@ -86,6 +86,7 @@ pub enum MessageTag {
     GenerateColumn,
     GenerateColumnReply,
     MeshData,
+    ChunkInfo,
 }
 
 pub fn update(worker: &mut impl Worker, message: Option<WorkerMessage>) -> Option<Duration> {
