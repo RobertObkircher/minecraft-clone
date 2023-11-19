@@ -1,20 +1,15 @@
 use crate::statistics::Statistics;
+use crate::worker::web_worker::WebWorker;
+use crate::worker::{WorkerId, WorkerMessage};
 use log::{Level, Log, Metadata, Record};
-use std::collections::VecDeque;
+use std::num::NonZeroU32;
 use std::panic::PanicInfo;
-use std::sync::Mutex;
+use std::time::Duration;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 use web_sys::Element;
 use winit::platform::web::WindowExtWebSys;
 use winit::window::Window;
-
-#[wasm_bindgen]
-extern "C" {
-    fn hardware_concurrency() -> u32;
-    fn spawn_worker() -> u32;
-    fn post_message(receiver: u32, message: Box<[u32]>);
-}
 
 #[wasm_bindgen(start)]
 pub fn wasm_start() {
@@ -24,30 +19,35 @@ pub fn wasm_start() {
 }
 
 #[wasm_bindgen]
-pub async fn wasm_main() {
-    for _ in 0..hardware_concurrency() {
-        let id = spawn_worker();
-        log::info!("Spawned {id}");
-    }
-    post_message(1, Box::new([1]));
-    post_message(2, Box::new([1, 2]));
-    post_message(3, Box::new([1, 2, 3]));
-
-    crate::run().await;
+pub async fn wasm_renderer() {
+    let mut worker = WebWorker;
+    crate::renderer(&mut worker).await;
 }
 
 #[wasm_bindgen]
-pub fn wasm_worker() -> bool {
-    post_message(0, Box::new([42]));
-    false
+pub fn wasm_update() -> i32 {
+    let mut worker = WebWorker;
+    to_millis(crate::worker::update(&mut worker, None))
 }
 
-static INCOMING: Mutex<VecDeque<(u32, Box<[u8]>)>> = Mutex::new(VecDeque::new());
-
 #[wasm_bindgen]
-pub fn wasm_onmessage(id: u32, message: Box<[u8]>) {
-    log::info!("onmessage got: {id} {message:?}");
-    INCOMING.lock().unwrap().push_back((id, message));
+pub fn wasm_update_with_message(id: u32, message: Box<[u8]>) -> i32 {
+    let mut worker = WebWorker;
+    to_millis(crate::worker::update(
+        &mut worker,
+        Some(WorkerMessage {
+            sender: NonZeroU32::try_from(id)
+                .map(WorkerId::Child)
+                .unwrap_or(WorkerId::Parent),
+            bytes: message,
+        }),
+    ))
+}
+
+fn to_millis(duration: Option<Duration>) -> i32 {
+    duration
+        .map(|it| i32::try_from(it.as_millis()).unwrap())
+        .unwrap_or(-1)
 }
 
 pub fn setup_window(winit_window: &Window) {

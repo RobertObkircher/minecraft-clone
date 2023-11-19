@@ -35,6 +35,7 @@ use crate::statistics::{FrameInfo, Statistics};
 use crate::terrain::{TerrainGenerator, WorldSeed};
 use crate::texture::BlockTexture;
 use crate::timer::Timer;
+use crate::worker::{MessageTag, Worker, WorkerId, WorkerMessage};
 use crate::world::World;
 
 mod camera;
@@ -50,6 +51,7 @@ mod texture;
 mod timer;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
+pub mod worker;
 mod world;
 
 fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
@@ -60,6 +62,74 @@ fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
     let view = Mat4::look_to_rh(camera.position, vs.direction, vs.up);
 
     projection * view
+}
+
+struct RendererState;
+
+impl RendererState {
+    pub fn update(
+        &mut self,
+        _worker: &mut impl Worker,
+        _message: Option<WorkerMessage>,
+    ) -> Option<Duration> {
+        None
+    }
+}
+
+struct SimulationState {
+    seed: WorldSeed,
+    workers: Vec<WorkerId>,
+}
+
+impl SimulationState {
+    pub fn initialize<W: Worker>(
+        worker: &mut W,
+        message: WorkerMessage,
+    ) -> (Self, Option<Duration>) {
+        let seed = *bytemuck::from_bytes(&message.bytes[0..8]);
+        let workers = (0..W::available_parallelism().get())
+            .map(|_| worker.spawn_child())
+            .collect::<Vec<_>>();
+
+        workers.iter().for_each(|&w| {
+            worker.send_message(w, {
+                let mut message = [0u8; 9];
+                message[0..8].copy_from_slice(bytemuck::bytes_of(&seed));
+                *message.last_mut().unwrap() = MessageTag::InitGenerator as u8;
+                Box::new(message)
+            })
+        });
+
+        (SimulationState { seed, workers }, None)
+    }
+    pub fn update(
+        &mut self,
+        _worker: &mut impl Worker,
+        _message: Option<WorkerMessage>,
+    ) -> Option<Duration> {
+        None
+    }
+}
+
+struct GeneratorState {
+    generator: TerrainGenerator,
+}
+
+impl GeneratorState {
+    pub fn initialize<W: Worker>(_worker: &mut W, message: WorkerMessage) -> Self {
+        let seed = *bytemuck::from_bytes(&message.bytes[0..8]);
+
+        GeneratorState {
+            generator: TerrainGenerator::new(seed),
+        }
+    }
+    pub fn update(
+        &mut self,
+        _worker: &mut impl Worker,
+        _message: Option<WorkerMessage>,
+    ) -> Option<Duration> {
+        None
+    }
 }
 
 const DEPTH_TEXTURE_FORMAT: TextureFormat = TextureFormat::Depth32Float;
@@ -90,8 +160,17 @@ pub fn create_depth_texture(
 /// wgpu wants this to be non-zero and chromium 4x4
 const MIN_SURFACE_SIZE: u32 = 4;
 
-pub async fn run() {
+pub async fn renderer(worker: &mut impl Worker) {
     info!("Hello, world!");
+
+    let simulation = worker.spawn_child();
+    let seed = WorldSeed(42);
+    {
+        let mut message = [0u8; 9];
+        message[0..8].copy_from_slice(bytemuck::bytes_of(&seed));
+        *message.last_mut().unwrap() = MessageTag::InitSimulation as u8;
+        worker.send_message(simulation, Box::new(message));
+    }
 
     let event_loop = EventLoop::new().unwrap();
 
@@ -268,7 +347,7 @@ pub async fn run() {
     let delta_time = Duration::from_millis(16).as_secs_f32();
 
     let mut world = World::new(12, 16);
-    let mut terrain = TerrainGenerator::new(WorldSeed(42));
+    let mut terrain = TerrainGenerator::new(seed);
 
     let mut start = Timer::now();
 

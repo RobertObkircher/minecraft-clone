@@ -3,11 +3,13 @@ use crate::noise::ImprovedNoise;
 use crate::position::ChunkPosition;
 use crate::statistics::ChunkInfo;
 use crate::timer::Timer;
+use bytemuck::{Pod, Zeroable};
 use glam::IVec3;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
-#[derive(Copy, Clone, Debug)]
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Zeroable, Pod)]
 pub struct WorldSeed(pub u64);
 
 #[derive(Copy, Clone, Debug)]

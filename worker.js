@@ -1,13 +1,24 @@
-import init, {wasm_main, wasm_worker, wasm_onmessage } from "./pkg/minecraft_clone.js";
+import init, {wasm_renderer, wasm_update, wasm_update_with_message } from "./pkg/minecraft_clone.js";
 
 /** @type {Worker[]} */
 let workers = [];
 
+function do_update() {
+    let timeout = wasm_update();
+    if (timeout >= 0) {
+        setTimeout(do_update, timeout);
+    }
+}
+
 /**
- * @returns {number}
+ * @param {number} id
+ * @param {MessageEvent} ev
  */
-export function hardware_concurrency() {
-    return navigator.hardwareConcurrency;
+function do_update_with_message(id, ev) {
+    let timeout = wasm_update_with_message(id, ev.data);
+    if (timeout >= 0) {
+        setTimeout(do_update, timeout);
+    }
 }
 
 /**
@@ -17,7 +28,7 @@ export function spawn_worker() {
     let worker = new Worker("worker.js", {type: "module"});
     let id = workers.push(worker);
     worker.onmessage = ev => {
-        wasm_onmessage(id, ev.data);
+        do_update_with_message(id, ev);
     };
     return id;
 }
@@ -35,22 +46,16 @@ export function post_message(id, message) {
 }
 
 // TODO find better way to do this
-self.hardware_concurrency = hardware_concurrency;
 self.spawn_worker = spawn_worker;
 self.post_message = post_message;
 
-await init();
-
 if (self.document) {
-    await wasm_main();
+    await init();
+    await wasm_renderer();
 } else {
-    onmessage = ev => {
-        wasm_onmessage(0, ev.data);
+    onmessage = async ev => {
+        await init();
+        do_update_with_message(0, ev);
     };
-    wasm_worker();
-    // function do_work() {
-    //     let timeout = wasm_worker();
-    //     setTimeout(do_work, timeout);
-    // }
-    // do_work();
+    await init();
 }
