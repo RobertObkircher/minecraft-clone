@@ -1,8 +1,10 @@
 extern crate core;
 
+use bytemuck::{Contiguous, Pod, Zeroable};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
+use std::mem::size_of;
 use std::time::Duration;
 
 use glam::{IVec3, Mat4, Vec3};
@@ -33,7 +35,7 @@ use crate::camera::Camera;
 use crate::chunk::{Block, Chunk};
 use crate::mesh::ChunkMesh;
 use crate::position::{BlockPosition, ChunkPosition};
-use crate::statistics::{FrameInfo, Statistics};
+use crate::statistics::{ChunkInfo, FrameInfo, Statistics};
 use crate::terrain::{TerrainGenerator, WorldSeed};
 use crate::texture::BlockTexture;
 use crate::timer::Timer;
@@ -68,7 +70,10 @@ fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
 
 struct SimulationState {
     seed: WorldSeed,
+    world: World,
     workers: Vec<WorkerId>,
+    worker_task_count: usize,
+    next_worker_index: usize,
 }
 
 impl SimulationState {
@@ -77,47 +82,171 @@ impl SimulationState {
         message: WorkerMessage,
     ) -> (Self, Option<Duration>) {
         let seed = *bytemuck::from_bytes(&message.bytes[0..8]);
+
+        let world = World::new(12, 16);
+
         let workers = (0..W::available_parallelism().get())
             .map(|_| worker.spawn_child())
             .collect::<Vec<_>>();
 
         workers.iter().for_each(|&w| {
             worker.send_message(w, {
-                let mut message = [0u8; 9];
+                let mut message = [0u8; 17];
                 message[0..8].copy_from_slice(bytemuck::bytes_of(&seed));
+                message[8..12].copy_from_slice(bytemuck::bytes_of(&world.highest_generated_chunk));
+                message[12..16].copy_from_slice(bytemuck::bytes_of(&world.lowest_generated_chunk));
                 *message.last_mut().unwrap() = MessageTag::InitGenerator as u8;
                 Box::new(message)
             })
         });
 
-        (SimulationState { seed, workers }, None)
+        let mut state = SimulationState {
+            seed,
+            world,
+            workers,
+            worker_task_count: 0,
+            next_worker_index: 0,
+        };
+
+        state.send_commands_to_workers(worker);
+
+        (state, None)
     }
+
+    fn send_commands_to_workers(&mut self, worker: &mut impl Worker) {
+        while let Some((x, z)) = self.world.next_column_to_generate() {
+            let mut message = [0u8; 9];
+            message[0..4].copy_from_slice(&x.to_ne_bytes());
+            message[4..8].copy_from_slice(&z.to_ne_bytes());
+            *message.last_mut().unwrap() = MessageTag::GenerateColumn as u8;
+
+            worker.send_message(self.workers[self.next_worker_index], Box::new(message));
+
+            self.worker_task_count += 1;
+
+            self.next_worker_index += 1;
+            if self.next_worker_index >= self.workers.len() {
+                self.next_worker_index = 0;
+            }
+        }
+    }
+
     pub fn update(
         &mut self,
         _worker: &mut impl Worker,
-        _message: Option<WorkerMessage>,
+        message: Option<WorkerMessage>,
     ) -> Option<Duration> {
+        let tag = message.as_ref().map(WorkerMessage::tag);
+
+        if tag == Some(MessageTag::GenerateColumnReply) {
+            let message = message.unwrap();
+            let x = *bytemuck::from_bytes::<i32>(&message.bytes[0..4]);
+            let z = *bytemuck::from_bytes::<i32>(&message.bytes[4..8]);
+
+            let mut remainder = &message.bytes[8..];
+
+            for y in self.world.lowest_generated_chunk..=self.world.highest_generated_chunk {
+                let is_some = remainder[0];
+                let position = ChunkPosition::from_chunk_index(IVec3::new(x, y, z));
+
+                if is_some == 1 {
+                    let element = bytemuck::from_bytes::<ChunkColumnElement>(
+                        &remainder[0..size_of::<ChunkColumnElement>()],
+                    );
+                    let chunk = Chunk {
+                        blocks: element
+                            .blocks
+                            .map(|it| it.map(|it| it.map(|it| Block::from_integer(it).unwrap()))),
+                        transparency: element.transparency,
+                        in_mesh_queue: false,
+                        non_air_block_count: element.non_air_block_count,
+                    };
+                    self.world.add_chunk(position, chunk);
+                    remainder = &remainder[size_of::<ChunkColumnElement>()..];
+                } else {
+                    self.world.add_air_chunk(position);
+                    remainder = &remainder[2..];
+                }
+            }
+        }
+
         None
     }
 }
 
 struct GeneratorState {
     generator: TerrainGenerator,
+    highest_generated_chunk: i32,
+    lowest_generated_chunk: i32,
+}
+
+#[repr(C)]
+#[derive(Zeroable, Pod, Copy, Clone)]
+struct ChunkColumnElement {
+    is_some: u8,
+    transparency: u8,
+    non_air_block_count: u16,
+    blocks: [[[u8; Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE],
 }
 
 impl GeneratorState {
     pub fn initialize<W: Worker>(_worker: &mut W, message: WorkerMessage) -> Self {
         let seed = *bytemuck::from_bytes(&message.bytes[0..8]);
+        let highest_generated_chunk = *bytemuck::from_bytes(&message.bytes[8..12]);
+        let lowest_generated_chunk = *bytemuck::from_bytes(&message.bytes[12..16]);
 
         GeneratorState {
             generator: TerrainGenerator::new(seed),
+            highest_generated_chunk,
+            lowest_generated_chunk,
         }
     }
     pub fn update(
         &mut self,
-        _worker: &mut impl Worker,
-        _message: Option<WorkerMessage>,
+        worker: &mut impl Worker,
+        message: Option<WorkerMessage>,
     ) -> Option<Duration> {
+        let tag = message.as_ref().map(WorkerMessage::tag);
+
+        if tag == Some(MessageTag::GenerateColumn) {
+            let message = message.unwrap();
+            let x = *bytemuck::from_bytes::<i32>(&message.bytes[0..4]);
+            let z = *bytemuck::from_bytes::<i32>(&message.bytes[4..8]);
+
+            let count = (self.highest_generated_chunk - self.lowest_generated_chunk) as usize + 1;
+
+            let mut message =
+                Vec::<u8>::with_capacity(8 + count * size_of::<ChunkColumnElement>() + 1);
+
+            message.extend_from_slice(bytemuck::bytes_of(&x));
+            message.extend_from_slice(bytemuck::bytes_of(&z));
+
+            for y in self.lowest_generated_chunk..=self.highest_generated_chunk {
+                let (chunk, info) = self
+                    .generator
+                    .fill_chunk(ChunkPosition::from_chunk_index(IVec3::new(x, y, z)));
+
+                // TODO send chunk infos to render thread
+
+                if let Some(chunk) = chunk {
+                    message.extend_from_slice(bytemuck::bytes_of(&ChunkColumnElement {
+                        is_some: 1,
+                        transparency: chunk.transparency,
+                        non_air_block_count: chunk.non_air_block_count,
+                        blocks: chunk.blocks.map(|it| it.map(|it| it.map(|it| it as u8))),
+                    }));
+                } else {
+                    message.push(0); // false
+                    message.push(0); // alignment
+                }
+            }
+
+            message.push(MessageTag::GenerateColumnReply as u8);
+            let message = message.into_boxed_slice();
+
+            worker.send_message(WorkerId::Parent, message);
+        }
+
         None
     }
 }

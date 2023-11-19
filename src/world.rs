@@ -13,8 +13,8 @@ use crate::terrain::TerrainGenerator;
 #[allow(unused)]
 pub struct World {
     view_distance: u16,
-    highest_generated_chunk: i32,
-    lowest_generated_chunk: i32,
+    pub highest_generated_chunk: i32,
+    pub lowest_generated_chunk: i32,
     chunks: Vec<Chunk>,
     position_to_index: HashMap<ChunkPosition, ChunkIndex>,
     position_to_mesh: HashMap<ChunkPosition, ChunkMesh>,
@@ -52,8 +52,13 @@ impl World {
             position_to_index: Default::default(),
             position_to_mesh: Default::default(),
             generation_queue: VecDeque::from(generation_queue),
+
             mesh_queue: VecDeque::new(),
         }
+    }
+
+    pub fn next_column_to_generate(&mut self) -> Option<(i32, i32)> {
+        self.generation_queue.pop_front().map(|(x, _, z)| (x, z))
     }
 
     pub fn generate_chunks(

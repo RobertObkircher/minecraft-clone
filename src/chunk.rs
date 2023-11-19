@@ -1,3 +1,5 @@
+use bytemuck::Contiguous;
+
 #[derive(Clone)]
 pub struct Chunk {
     pub blocks: [[[Block; Chunk::SIZE]; Chunk::SIZE]; Chunk::SIZE],
@@ -74,7 +76,8 @@ impl Default for Chunk {
     }
 }
 
-#[derive(Debug, Default, Eq, PartialEq, Copy, Clone)]
+#[repr(u8)]
+#[derive(Debug, Default, Eq, PartialEq, Copy, Clone, Contiguous)]
 pub enum Block {
     #[default]
     Air,

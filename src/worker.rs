@@ -61,6 +61,8 @@ impl WorkerMessage {
 pub enum MessageTag {
     InitSimulation,
     InitGenerator,
+    GenerateColumn,
+    GenerateColumnReply,
 }
 
 pub fn update(worker: &mut impl Worker, message: Option<WorkerMessage>) -> Option<Duration> {
