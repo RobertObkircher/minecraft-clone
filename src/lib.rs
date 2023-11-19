@@ -180,6 +180,9 @@ pub async fn renderer(worker: &mut impl Worker) {
         .build(&event_loop)
         .unwrap();
 
+    // SAFETY: ensure that window is not moved to the closure and dropped last
+    let window = &window;
+
     #[cfg(target_arch = "wasm32")]
     wasm::setup_window(&window);
 
