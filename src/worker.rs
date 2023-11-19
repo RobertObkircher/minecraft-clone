@@ -83,7 +83,10 @@ pub fn update(worker: &mut impl Worker, message: Option<WorkerMessage>) -> Optio
 
         // non-state changing messages:
         match state.as_mut().unwrap() {
-            State::Renderer(s) => s.update(worker, message),
+            State::Renderer(s) => {
+                s.update(worker, message);
+                None
+            }
             State::Simulation(s) => s.update(worker, message),
             State::Generator(s) => s.update(worker, message),
         }

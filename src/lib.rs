@@ -184,13 +184,7 @@ pub struct RendererState {
 }
 
 impl RendererState {
-    pub fn update(
-        &mut self,
-        _worker: &mut impl Worker,
-        _message: Option<WorkerMessage>,
-    ) -> Option<Duration> {
-        None
-    }
+    pub fn update(&mut self, _worker: &mut impl Worker, _message: Option<WorkerMessage>) {}
 }
 
 impl RendererState {
