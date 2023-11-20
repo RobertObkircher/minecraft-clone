@@ -10,7 +10,9 @@ use std::time::Duration;
 
 use bytemuck::{AnyBitPattern, Contiguous};
 
-use crate::{GeneratorState, RendererState, SimulationState};
+use crate::generator::GeneratorState;
+use crate::renderer::RendererState;
+use crate::simulation::SimulationState;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum WorkerId {

@@ -6,7 +6,7 @@ use glam::{IVec3, Vec3};
 use crate::chunk::{Block, Chunk, Transparency};
 use crate::mesh::{ChunkMesh, Vertex};
 use crate::position::{BlockPosition, ChunkPosition};
-use crate::MeshData;
+use crate::renderer::MeshData;
 
 #[allow(unused)]
 pub struct World {

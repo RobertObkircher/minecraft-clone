@@ -5,7 +5,6 @@ use crate::RendererState;
 use log::{Level, Log, Metadata, Record};
 use std::num::NonZeroU32;
 use std::panic::PanicInfo;
-use std::time::Duration;
 use wasm_bindgen::prelude::*;
 use web_sys::console;
 use web_sys::Element;
