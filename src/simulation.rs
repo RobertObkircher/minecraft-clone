@@ -1,19 +1,20 @@
-use bytemuck::Contiguous;
-
 use std::mem::size_of_val;
 use std::time::Duration;
 
+use bytemuck::Contiguous;
 use glam::IVec3;
 
-use crate::chunk::{Block, Chunk};
+use chunk::{Block, Chunk};
+use position::ChunkPosition;
+use world::World;
+
 use crate::generator::ChunkColumnElement;
-
-use crate::position::ChunkPosition;
-
-use crate::terrain::WorldSeed;
-
+use crate::generator::terrain::WorldSeed;
 use crate::worker::{MessageTag, Worker, WorkerId, WorkerMessage};
-use crate::world::World;
+
+pub mod chunk;
+pub mod position;
+pub mod world;
 
 pub struct SimulationState {
     seed: WorldSeed,

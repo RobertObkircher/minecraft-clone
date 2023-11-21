@@ -3,10 +3,10 @@ use std::mem;
 
 use glam::{IVec3, Vec3};
 
-use crate::chunk::{Block, Chunk, Transparency};
-use crate::mesh::{ChunkMesh, Vertex};
-use crate::position::{BlockPosition, ChunkPosition};
+use crate::renderer::mesh::{ChunkMesh, Vertex};
 use crate::renderer::MeshData;
+use crate::simulation::chunk::{Block, Chunk, Transparency};
+use crate::simulation::position::{BlockPosition, ChunkPosition};
 
 #[allow(unused)]
 pub struct World {

@@ -1,10 +1,9 @@
-use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
-
 use std::time::Duration;
 
+use bytemuck::{Pod, Zeroable};
 use glam::{IVec3, Mat4, Vec3};
 use log::info;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
@@ -29,16 +28,23 @@ use winit::event_loop::EventLoopWindowTarget;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, Window};
 
-use crate::camera::Camera;
-use crate::chunk::Chunk;
+use camera::Camera;
+use mesh::{ChunkMesh, Vertex};
+use texture::BlockTexture;
+
+use crate::generator::terrain::WorldSeed;
 use crate::generator::ChunkInfoBytes;
-use crate::mesh::{ChunkMesh, Vertex};
-use crate::position::{BlockPosition, ChunkPosition};
+use crate::simulation::chunk::Chunk;
+use crate::simulation::position::{BlockPosition, ChunkPosition};
 use crate::statistics::{ChunkInfo, FrameInfo, Statistics};
-use crate::terrain::WorldSeed;
-use crate::texture::BlockTexture;
 use crate::timer::Timer;
 use crate::worker::{MessageTag, Worker, WorkerMessage};
+
+mod camera;
+pub mod mesh;
+#[cfg(feature = "reload")]
+mod reload;
+mod texture;
 
 fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
     let fov_y_radians = PI / 4.0;
@@ -87,7 +93,7 @@ pub struct RendererState {
     #[cfg(not(feature = "reload"))]
     render_pipeline: RenderPipeline,
     #[cfg(feature = "reload")]
-    render_pipeline_reloader: crate::reload::Reloader,
+    render_pipeline_reloader: reload::Reloader,
     #[cfg(feature = "reload")]
     render_pipeline: Option<RenderPipeline>,
     pipeline_layout: PipelineLayout,
@@ -258,7 +264,7 @@ impl RendererState {
         let blocks = BlockTexture::from_bitmap_bytes(
             &device,
             &queue,
-            include_bytes!("blocks.bmp"),
+            include_bytes!("renderer/blocks.bmp"),
             "blocks.bmp",
         );
 
@@ -292,11 +298,11 @@ impl RendererState {
             &device,
             &pipeline_layout,
             swapchain_format.into(),
-            include_str!("shader.wgsl"),
+            include_str!("renderer/shader.wgsl"),
         );
 
         #[cfg(feature = "reload")]
-        let render_pipeline_reloader = crate::reload::Reloader::new(file!(), "shader.wgsl");
+        let render_pipeline_reloader = reload::Reloader::new(file!(), "renderer/shader.wgsl");
         #[cfg(feature = "reload")]
         let render_pipeline = None;
 
@@ -370,7 +376,7 @@ impl RendererState {
 
                         #[cfg(feature = "reload")]
                         if let Some(changed) = self.render_pipeline_reloader.get_changed_content() {
-                            self.render_pipeline = match crate::reload::validate_shader(
+                            self.render_pipeline = match reload::validate_shader(
                                 changed,
                                 &self.device.features(),
                                 &self.device.limits(),

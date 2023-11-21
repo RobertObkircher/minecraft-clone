@@ -1,8 +1,8 @@
-use crate::chunk::{Block, Chunk, Transparency};
-use crate::position::ChunkPosition;
+use crate::simulation::chunk::{Block, Chunk, Transparency};
+use crate::simulation::position::ChunkPosition;
+use crate::simulation::world::ChunkNeighbours;
 use crate::statistics::ChunkMeshInfo;
 use crate::timer::Timer;
-use crate::world::ChunkNeighbours;
 use bytemuck::{Pod, Zeroable};
 use std::mem;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};

@@ -1,6 +1,6 @@
-use crate::chunk::{Block, Chunk};
-use crate::noise::ImprovedNoise;
-use crate::position::ChunkPosition;
+use crate::generator::noise::ImprovedNoise;
+use crate::simulation::chunk::{Block, Chunk};
+use crate::simulation::position::ChunkPosition;
 use crate::statistics::ChunkInfo;
 use crate::timer::Timer;
 use bytemuck::{Pod, Zeroable};

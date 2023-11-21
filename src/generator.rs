@@ -1,17 +1,17 @@
-use bytemuck::{Pod, Zeroable};
-
 use std::mem::size_of;
 use std::time::Duration;
 
+use bytemuck::{Pod, Zeroable};
 use glam::IVec3;
 
-use crate::chunk::Chunk;
+use terrain::TerrainGenerator;
 
-use crate::position::ChunkPosition;
-
-use crate::terrain::TerrainGenerator;
-
+use crate::simulation::chunk::Chunk;
+use crate::simulation::position::ChunkPosition;
 use crate::worker::{MessageTag, Worker, WorkerId, WorkerMessage};
+
+mod noise;
+pub mod terrain;
 
 pub struct GeneratorState {
     generator: TerrainGenerator,

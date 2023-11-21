@@ -1,6 +1,5 @@
+use crate::simulation::chunk::Chunk;
 use glam::IVec3;
-
-use crate::chunk::Chunk;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct ChunkPosition(IVec3);
