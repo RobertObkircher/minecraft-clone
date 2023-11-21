@@ -49,9 +49,11 @@ pub mod mesh;
 mod reload;
 mod texture;
 
+const Z_NEAR: f32 = 0.1f32;
+
 fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
     let fov_y_radians = PI / 4.0;
-    let projection = Mat4::perspective_rh(fov_y_radians, aspect_ratio, 0.1, 1000.0);
+    let projection = Mat4::perspective_rh(fov_y_radians, aspect_ratio, Z_NEAR, 1000.0);
 
     let vs = camera.computed_vectors();
     let view = Mat4::look_to_rh(camera.position, vs.direction, vs.up);
@@ -395,7 +397,11 @@ impl RendererState {
                                     && f.start.elapsed() >= Finger::LONG_TAP
                             }) {
                                 self.fingers[index].long_tapped = true;
-                                self.send_player_command(worker, -20);
+                                self.send_player_command(
+                                    worker,
+                                    -20,
+                                    Some(self.fingers[index].previous_position),
+                                );
                             }
                         }
 
@@ -562,13 +568,13 @@ impl RendererState {
                             && state == ElementState::Pressed
                             && button == MouseButton::Left
                         {
-                            self.send_player_command(worker, -1);
+                            self.send_player_command(worker, -1, None);
                         }
                         if self.is_locked
                             && state == ElementState::Pressed
                             && button == MouseButton::Right
                         {
-                            self.send_player_command(worker, 1);
+                            self.send_player_command(worker, 1, None);
                         }
 
                         // TODO account for device_id
@@ -634,7 +640,7 @@ impl RendererState {
                                 if finger.total_distance < cutoff {
                                     let elapsed = finger.start.elapsed();
                                     if elapsed < Finger::LONG_TAP {
-                                        self.send_player_command(worker, 1);
+                                        self.send_player_command(worker, 1, Some(location));
                                         // no need to mark finger as tapped because it removed from the list
                                     }
                                 }
@@ -666,12 +672,12 @@ impl RendererState {
                                 }
                                 "q" => {
                                     if event.state.is_pressed() {
-                                        self.send_player_command(worker, -20);
+                                        self.send_player_command(worker, -20, None);
                                     }
                                 }
                                 "e" => {
                                     if event.state.is_pressed() {
-                                        self.send_player_command(worker, 20);
+                                        self.send_player_command(worker, 20, None);
                                     }
                                 }
                                 _ => {}
@@ -695,12 +701,25 @@ impl RendererState {
         }
     }
 
-    fn send_player_command(&self, worker: &impl Worker, diameter: i32) {
-        let vs = self.camera.computed_vectors();
+    fn send_player_command(
+        &self,
+        worker: &impl Worker,
+        diameter: i32,
+        location: Option<PhysicalPosition<f64>>,
+    ) {
+        let (camera_position, camera_direction) = location
+            .map(|it| self.screen_to_world(it))
+            .unwrap_or_else(|| {
+                (
+                    self.camera.position,
+                    self.camera.computed_vectors().direction,
+                )
+            });
+
         let command = PlayerCommand {
             player_chunk: self.player_chunk.index().to_array(),
-            camera_position: self.camera.position.to_array(),
-            camera_direction: vs.direction.to_array(),
+            camera_position: camera_position.to_array(),
+            camera_direction: camera_direction.to_array(),
             diameter,
         };
         info!("send_player_command: {command:?}");
@@ -779,6 +798,38 @@ impl RendererState {
             });
         }
         assert_eq!(remaining.len(), 1);
+    }
+
+    fn screen_to_world(&self, finger: PhysicalPosition<f64>) -> (Vec3, Vec3) {
+        let aspect_ratio = self.config.width as f32 / self.config.height as f32;
+        let camera = &self.camera;
+        // TODO inner or outer size? How to compute the center?
+        let size = self.window.inner_size();
+
+        let inverse = generate_matrix(aspect_ratio, camera).inverse();
+
+        let px = finger.x / size.width as f64 * 2.0 - 1.0;
+        let py = 1.0 - (finger.y / size.height as f64 * 2.0);
+
+        debug_assert!(px.abs() <= 1.1);
+        debug_assert!(py.abs() <= 1.1);
+
+        log::info!("Screen coodinates: {px} {py}");
+        log::info!("Camera position: {:?}", camera.position);
+
+        let world_position = inverse.project_point3(Vec3::new(px as f32, py as f32, 0.0));
+        // let world_position = inverse * Vec4::new(px as f32, py as f32, 1.0, 1.0);
+        // let world_position = Vec3::new(world_position.x, world_position.y, world_position.z);
+
+        log::info!("unprojected: {world_position:?}");
+
+        // from eye to near clipping plane
+        let direction = world_position - camera.position;
+
+        // in the center of the screen they should be equal, on the edges the new vector is longer
+        debug_assert!(direction.length() >= Z_NEAR);
+
+        (world_position, direction.normalize())
     }
 }
 
