@@ -397,9 +397,23 @@ impl RendererState {
                                     && f.start.elapsed() >= Finger::LONG_TAP
                             }) {
                                 self.fingers[index].long_tapped = true;
+
+                                let second = self.fingers[index..].iter().position(|f| {
+                                    !f.long_tapped
+                                        && f.total_distance < cutoff
+                                        && f.start.elapsed() >= Finger::LONG_TAP
+                                });
+
+                                let diameter = if let Some(second) = second {
+                                    self.fingers[second].long_tapped = true;
+                                    -20
+                                } else {
+                                    -1
+                                };
+
                                 self.send_player_command(
                                     worker,
-                                    -20,
+                                    diameter,
                                     Some(self.fingers[index].previous_position),
                                 );
                             }

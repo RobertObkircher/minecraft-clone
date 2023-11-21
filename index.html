@@ -16,7 +16,7 @@
             display: none;
         }
         @media (max-width: 700px){
-            #statistics, #controls {
+            #statistics {
                 font-size: 50%;
             }
         }
@@ -27,23 +27,42 @@
         }
         canvas {
             margin-top: 2px;
-            width: 100%;
             aspect-ratio: 16 / 9;
-            max-height: 80vh;
+            max-height: 60vh;
+            max-width: 100%;
+        }
+        @media (min-width: 480px){
+            .controls {
+                display: flex;
+            }
+        }
+        .controls>ul {
+            list-style: none;
+            padding-left: 1em;
         }
     </style>
 </head>
 <body>
 The code is available on <a href="https://github.com/RobertObkircher/minecraft-clone">GitHub</a>!<br>
-<div id="controls">
-    Controls:
-    <kbd>W</kbd>&nbsp;<kbd>A</kbd>&nbsp;<kbd>S</kbd>&nbsp;<kbd>D</kbd>&nbsp;movement,
-    <kbd>Left-Click</kbd>&nbsp;destroy&nbsp;block,
-    <kbd>Right-Click</kbd>&nbsp;place&nbsp;block,
-    <kbd>Q</kbd>&nbsp;explosion,
-    <kbd>E</kbd>&nbsp;anti-explosion,
-    <kbd>P</kbd>&nbsp;toggle statistics printing
-    <kbd>ESC</kbd> release captured mouse
+
+<div class="controls">
+    <ul>
+        <li><b>PC-Controls</b>:</li>
+        <li><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> movement</li>
+        <li><kbd>Left-Click</kbd> destroy block</li>
+        <li><kbd>Right-Click</kbd> place block</li>
+        <li><kbd>Q</kbd> explosion</li>
+        <li><kbd>E</kbd> anti-explosion</li>
+        <li><kbd>P</kbd> toggle statistics printing</li>
+        <li><kbd>ESC</kbd> release captured mouse</li>
+    </ul>
+    <ul>
+        <li><b>Touch-Controls:</b></li>
+        <li><kbd>Swipe</kbd> look around</li>
+        <li><kbd>Long-Tap</kbd> destroy block</li>
+        <li><kbd>Short-Tap</kbd> place block</li>
+        <li><kbd>Two-Finger-Long-Tap</kbd> explosion</li>
+    </ul>
 </div>
 <button type="button" onclick="let c = document.getElementsByTagName('canvas')[0]; c.requestFullscreen(); c.focus();">Fullscreen</button>
 <br>
