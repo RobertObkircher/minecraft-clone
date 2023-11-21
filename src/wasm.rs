@@ -1,8 +1,9 @@
 use crate::statistics::Statistics;
 use crate::worker::web_worker::WebWorker;
-use crate::worker::{set_renderer_state, with_renderer_state, WorkerId, WorkerMessage};
+use crate::worker::{State, WorkerId, WorkerMessage};
 use crate::RendererState;
 use log::{Level, Log, Metadata, Record};
+use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::panic::PanicInfo;
 use wasm_bindgen::prelude::*;
@@ -19,10 +20,11 @@ pub fn wasm_start() {
     log::set_max_level(log::Level::Info.to_level_filter());
 }
 
+// This could also be a `static mut`
+thread_local! {static STATE: RefCell<Option<State>> = const { RefCell::new(None) } }
+
 #[wasm_bindgen]
 pub async fn wasm_renderer() {
-    let mut worker = WebWorker;
-
     let event_loop = EventLoop::new().unwrap();
 
     let winit_window = Window::new(&event_loop).unwrap();
@@ -36,17 +38,18 @@ pub async fn wasm_renderer() {
         body.append_child(&canvas).unwrap();
     }
 
-    let state = RendererState::new(winit_window, &mut worker).await;
-    set_renderer_state(state);
+    let state = RendererState::new(winit_window, &mut WebWorker).await;
+    STATE.with_borrow_mut(|s| *s = Some(State::Renderer(state)));
 
     // This only registers callbacks and returns immediately,
     // because we must not block the javascript event loop.
     // If we called run instead then winit would force the immediate
     // return with a javascript exception.
     event_loop.spawn(|event, target| {
-        with_renderer_state(|state| {
-            state.process_event(event, target);
-        })
+        STATE.with_borrow_mut(|state| match state {
+            Some(State::Renderer(state)) => state.process_event(event, target),
+            _ => unreachable!(),
+        });
     });
 }
 
@@ -66,8 +69,8 @@ pub fn wasm_update_with_message(id: u32, message: Box<[u8]>) -> i32 {
 }
 
 fn update(message: Option<WorkerMessage>) -> i32 {
-    let mut worker = WebWorker;
-    let duration = crate::worker::update(&mut worker, message);
+    let duration =
+        STATE.with_borrow_mut(|state| crate::worker::update(&mut WebWorker, state, message));
     duration
         .map(|it| i32::try_from(it.as_millis()).unwrap())
         .unwrap_or(-1)

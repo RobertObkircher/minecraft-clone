@@ -7,6 +7,7 @@ use crate::worker;
 use crate::worker::{Worker, WorkerId, WorkerMessage};
 
 fn run_thread(mut w: ThreadWorker) {
+    let mut state = None;
     let mut timeout = None;
     loop {
         let message = if let Some(timeout) = timeout {
@@ -21,7 +22,7 @@ fn run_thread(mut w: ThreadWorker) {
                 Err(RecvError {}) => return,
             }
         };
-        timeout = worker::update(&mut w, message);
+        timeout = worker::update(&mut w, &mut state, message);
     }
 }
 

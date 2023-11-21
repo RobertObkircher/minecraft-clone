@@ -3,7 +3,6 @@ pub mod thread_worker;
 #[cfg(target_arch = "wasm32")]
 pub mod web_worker;
 
-use std::cell::RefCell;
 use std::mem;
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::time::Duration;
@@ -26,23 +25,7 @@ pub trait Worker {
     fn available_parallelism() -> NonZeroUsize;
 }
 
-thread_local! {static WORKER_STATE: RefCell<Option<State>> = RefCell::new(None); }
-
-pub fn set_renderer_state(s: RendererState) {
-    WORKER_STATE.with_borrow_mut(|state| {
-        assert!(state.is_none());
-        *state = Some(State::Renderer(s));
-    })
-}
-
-pub fn with_renderer_state<F: FnOnce(&mut RendererState)>(f: F) {
-    WORKER_STATE.with_borrow_mut(|s| match s {
-        Some(State::Renderer(s)) => f(s),
-        _ => unreachable!(),
-    });
-}
-
-enum State {
+pub enum State {
     Renderer(RendererState),
     Simulation(SimulationState),
     Generator(GeneratorState),
@@ -91,31 +74,32 @@ pub enum MessageTag {
     ChunkInfo,
 }
 
-pub fn update(worker: &mut impl Worker, message: Option<WorkerMessage>) -> Option<Duration> {
-    WORKER_STATE.with_borrow_mut(|state| {
-        // state changing messages:
-        let tag = message.as_ref().map(WorkerMessage::tag);
-        if tag == Some(MessageTag::InitSimulation) {
-            let message = message.unwrap();
-            let (s, result) = SimulationState::initialize(worker, message);
+pub fn update(
+    worker: &mut impl Worker,
+    state: &mut Option<State>,
+    message: Option<WorkerMessage>,
+) -> Option<Duration> {
+    match message.as_ref().map(WorkerMessage::tag) {
+        Some(MessageTag::InitSimulation) => {
+            assert!(state.is_none());
+            let (s, result) = SimulationState::initialize(worker, message.unwrap());
             *state = Some(State::Simulation(s));
-            return result;
+            result
         }
-        if tag == Some(MessageTag::InitGenerator) {
-            let message = message.unwrap();
-            let s = GeneratorState::initialize(worker, message);
+        Some(MessageTag::InitGenerator) => {
+            assert!(state.is_none());
+            let s = GeneratorState::initialize(worker, message.unwrap());
             *state = Some(State::Generator(s));
-            return None;
+            None
         }
-
         // non-state changing messages:
-        match state.as_mut().unwrap() {
+        _ => match state.as_mut().expect("state must already be set") {
             State::Renderer(s) => {
                 s.update(worker, message);
                 None
             }
             State::Simulation(s) => s.update(worker, message),
             State::Generator(s) => s.update(worker, message),
-        }
-    })
+        },
+    }
 }
