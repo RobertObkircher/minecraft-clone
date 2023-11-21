@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
+use std::mem;
 use std::mem::size_of;
 use std::time::Duration;
 
@@ -110,13 +111,30 @@ pub struct RendererState {
     player_chunk_uniform_buffer: Buffer,
     start: Timer,
     delta_time: f32,
-    fingers: HashMap<(DeviceId, u64), PhysicalPosition<f64>>,
+    fingers: Vec<Finger>,
     is_locked: bool,
     print_statistics: bool,
     simulation: WorkerId,
 
     /// WARNING: order matters. This must be dropped last!
     window: Window,
+}
+
+struct Finger {
+    id: (DeviceId, u64),
+    previous_position: PhysicalPosition<f64>,
+    total_distance: f64,
+    start: Timer,
+    long_tapped: bool,
+}
+
+impl Finger {
+    const LONG_TAP: Duration = Duration::from_millis(400);
+
+    fn cutoff(window: &Window) -> f64 {
+        let size = window.inner_size();
+        size.width.min(size.height) as f64 * 0.05
+    }
 }
 
 #[repr(C)]
@@ -334,7 +352,7 @@ impl RendererState {
             player_chunk_uniform_buffer,
             start,
             delta_time,
-            fingers: HashMap::new(),
+            fingers: Vec::new(),
             is_locked: false,
             print_statistics: true,
             simulation,
@@ -367,6 +385,19 @@ impl RendererState {
                     }
                     WindowEvent::RedrawRequested => {
                         self.window.request_redraw();
+
+                        // TODO where should this happen?
+                        {
+                            let cutoff = Finger::cutoff(&self.window);
+                            if let Some(index) = self.fingers.iter().position(|f| {
+                                !f.long_tapped
+                                    && f.total_distance < cutoff
+                                    && f.start.elapsed() >= Finger::LONG_TAP
+                            }) {
+                                self.fingers[index].long_tapped = true;
+                                self.send_player_command(worker, -20);
+                            }
+                        }
 
                         #[cfg(target_arch = "wasm32")]
                         if self.is_locked
@@ -562,24 +593,51 @@ impl RendererState {
                         id,
                     }) => {
                         let id = (device_id, id);
+
+                        let size = self.window.inner_size();
+                        let cutoff = size.width.min(size.height) as f64 * 0.05;
+
                         match phase {
                             TouchPhase::Started => {
-                                self.fingers.insert(id, location);
-                                if self.fingers.len() == 2 {
-                                    self.send_player_command(worker, -20);
-                                }
+                                self.fingers.push(Finger {
+                                    id,
+                                    previous_position: location,
+                                    total_distance: 0.0,
+                                    start: Timer::now(),
+                                    long_tapped: false,
+                                });
                             }
                             TouchPhase::Moved => {
-                                let old = self.fingers.insert(id, location).unwrap();
+                                let position =
+                                    self.fingers.iter().position(|f| f.id == id).unwrap();
+                                let first = !self.fingers[0..position]
+                                    .iter()
+                                    .any(|it| it.total_distance >= cutoff);
+                                let finger = self.fingers.get_mut(position).unwrap();
+
+                                let old = mem::replace(&mut finger.previous_position, location);
                                 let dx = location.x - old.x;
                                 let dy = location.y - old.y;
+                                finger.total_distance += (dx * dx + dy * dy).sqrt();
 
-                                let speed = self.delta_time * 0.1;
-                                self.camera.turn_right(-dx as f32 * speed);
-                                self.camera.turn_up(dy as f32 * speed);
+                                if finger.total_distance >= cutoff && first {
+                                    let speed = self.delta_time * 0.1;
+                                    self.camera.turn_right(-dx as f32 * speed);
+                                    self.camera.turn_up(dy as f32 * speed);
+                                }
                             }
                             TouchPhase::Ended | TouchPhase::Cancelled => {
-                                self.fingers.remove(&id).unwrap();
+                                let position =
+                                    self.fingers.iter().position(|f| f.id == id).unwrap();
+                                let finger = self.fingers.remove(position);
+
+                                if finger.total_distance < cutoff {
+                                    let elapsed = finger.start.elapsed();
+                                    if elapsed < Finger::LONG_TAP {
+                                        self.send_player_command(worker, 1);
+                                        // no need to mark finger as tapped because it removed from the list
+                                    }
+                                }
                             }
                         }
                     }
