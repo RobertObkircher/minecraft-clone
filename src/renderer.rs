@@ -411,11 +411,9 @@ impl RendererState {
                             }) {
                                 self.fingers[index].long_tapped = true;
 
-                                let second = self.fingers[index..].iter().position(|f| {
-                                    !f.long_tapped
-                                        && f.total_distance < cutoff
-                                        && f.start.elapsed() >= Finger::LONG_TAP
-                                });
+                                let second = self.fingers[index..]
+                                    .iter()
+                                    .position(|f| !f.long_tapped && f.total_distance < cutoff);
 
                                 let diameter = if let Some(second) = second {
                                     self.fingers[second].long_tapped = true;
