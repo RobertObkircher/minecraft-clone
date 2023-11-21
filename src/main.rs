@@ -25,7 +25,7 @@ fn main() {
             while let Ok(message) = worker.incoming.try_recv() {
                 state.update(&mut worker, Some(message));
             }
-            state.process_event(event, target)
+            state.process_event(event, target, &worker);
         })
         .unwrap();
 

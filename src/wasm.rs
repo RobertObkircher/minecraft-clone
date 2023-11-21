@@ -47,7 +47,7 @@ pub async fn wasm_renderer() {
     // return with a javascript exception.
     event_loop.spawn(|event, target| {
         STATE.with_borrow_mut(|state| match state {
-            Some(State::Renderer(state)) => state.process_event(event, target),
+            Some(State::Renderer(state)) => state.process_event(event, target, &WebWorker),
             _ => unreachable!(),
         });
     });

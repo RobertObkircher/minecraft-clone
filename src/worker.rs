@@ -72,6 +72,7 @@ pub enum MessageTag {
     GenerateColumnReply,
     MeshData,
     ChunkInfo,
+    PlayerCommand,
 }
 
 pub fn update(
