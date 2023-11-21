@@ -391,6 +391,19 @@ impl RendererState {
                         // TODO where should this happen?
                         {
                             let cutoff = Finger::cutoff(&self.window);
+                            // movement
+                            if let Some(index) = self.fingers.iter().position(|f| {
+                                !f.long_tapped
+                                    && f.total_distance >= cutoff
+                                    && f.start.elapsed() >= Duration::from_secs(1)
+                            }) {
+                                let speed = self.delta_time * 20.0;
+                                let vs = self.camera.computed_vectors();
+                                let direction = (vs.direction + vs.up * 0.5).normalize();
+                                self.camera.position += direction * speed;
+                            }
+
+                            // destruction
                             if let Some(index) = self.fingers.iter().position(|f| {
                                 !f.long_tapped
                                     && f.total_distance < cutoff
