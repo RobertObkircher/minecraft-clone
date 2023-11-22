@@ -114,7 +114,7 @@ pub struct RendererState {
     start: Timer,
     delta_time: f32,
     fingers: Vec<Finger>,
-    movement_input: PlayerMovementInput,
+    controller: PlayerController,
     is_locked: bool,
     print_statistics: bool,
     simulation: WorkerId,
@@ -124,11 +124,13 @@ pub struct RendererState {
 }
 
 #[derive(Default)]
-struct PlayerMovementInput {
+struct PlayerController {
     forward: f32,
     left: f32,
     back: f32,
     right: f32,
+    exploding: Option<(f32, Option<(DeviceId, u64)>)>,
+    creating: Option<f32>,
 }
 
 struct Finger {
@@ -364,7 +366,7 @@ impl RendererState {
             start,
             delta_time,
             fingers: Vec::new(),
-            movement_input: PlayerMovementInput::default(),
+            controller: PlayerController::default(),
             is_locked: false,
             print_statistics: true,
             simulation,
@@ -427,6 +429,8 @@ impl RendererState {
 
                                 let diameter = if let Some(second) = second {
                                     self.fingers[second].long_tapped = true;
+                                    self.controller.exploding =
+                                        Some((0.0, Some(self.fingers[index].id)));
                                     -20
                                 } else {
                                     -1
@@ -444,13 +448,39 @@ impl RendererState {
                             let speed = self.delta_time * 100.0;
                             let vectors = self.camera.computed_vectors();
 
-                            let forward = self.movement_input.forward - self.movement_input.back;
-                            let right = self.movement_input.right - self.movement_input.left;
+                            let forward = self.controller.forward - self.controller.back;
+                            let right = self.controller.right - self.controller.left;
 
                             let delta = vectors.direction * forward + vectors.right * right;
 
                             if delta.length_squared() > 0.1 * 0.1 {
                                 self.camera.position += delta.normalize() * speed;
+                            }
+
+                            if let Some((accumulator, finger)) = &mut self.controller.exploding {
+                                *accumulator += self.delta_time;
+                                let time = 0.05;
+                                if *accumulator > time {
+                                    *accumulator -= time;
+
+                                    let position = finger.map(|it| {
+                                        self.fingers
+                                            .iter()
+                                            .find(|f| f.id == it)
+                                            .unwrap()
+                                            .previous_position
+                                    });
+
+                                    self.send_player_command(worker, -20, position);
+                                }
+                            }
+                            if let Some(accumulator) = &mut self.controller.creating {
+                                *accumulator += self.delta_time;
+                                let time = 0.3;
+                                if *accumulator > time {
+                                    *accumulator -= time;
+                                    self.send_player_command(worker, 20, None);
+                                }
                             }
                         }
 
@@ -686,6 +716,15 @@ impl RendererState {
                                     self.fingers.iter().position(|f| f.id == id).unwrap();
                                 let finger = self.fingers.remove(position);
 
+                                if self
+                                    .controller
+                                    .exploding
+                                    .map(|it| it.1 == Some(finger.id))
+                                    .unwrap_or(false)
+                                {
+                                    self.controller.exploding = None;
+                                }
+
                                 if finger.total_distance < cutoff {
                                     let elapsed = finger.start.elapsed();
                                     if elapsed < Finger::LONG_TAP {
@@ -705,14 +744,15 @@ impl RendererState {
                         if let Key::Character(str) = event.logical_key {
                             let vectors = self.camera.computed_vectors();
 
-                            let amount = if event.state.is_pressed() { 1.0 } else { 0.0 };
+                            let pressed = event.state.is_pressed();
+                            let amount = if pressed { 1.0 } else { 0.0 };
                             match str.as_str() {
-                                "w" => self.movement_input.forward = amount,
-                                "a" => self.movement_input.left = amount,
-                                "s" => self.movement_input.back = amount,
-                                "d" => self.movement_input.right = amount,
+                                "w" => self.controller.forward = amount,
+                                "a" => self.controller.left = amount,
+                                "s" => self.controller.back = amount,
+                                "d" => self.controller.right = amount,
                                 "p" => {
-                                    if event.state.is_pressed() {
+                                    if pressed {
                                         self.print_statistics ^= true;
                                         #[cfg(target_arch = "wasm32")]
                                         if !self.print_statistics {
@@ -721,14 +761,20 @@ impl RendererState {
                                     }
                                 }
                                 "q" => {
-                                    if event.state.is_pressed() {
+                                    let accumulator = self.controller.exploding.map(|it| it.0);
+                                    if pressed && accumulator.is_none() {
                                         self.send_player_command(worker, -20, None);
                                     }
+                                    self.controller.exploding =
+                                        pressed.then_some((accumulator.unwrap_or(-0.1), None));
                                 }
                                 "e" => {
-                                    if event.state.is_pressed() {
+                                    let accumulator = self.controller.creating;
+                                    if pressed && accumulator.is_none() {
                                         self.send_player_command(worker, 20, None);
                                     }
+                                    self.controller.creating =
+                                        pressed.then_some(accumulator.unwrap_or(0.0));
                                 }
                                 _ => {}
                             }
