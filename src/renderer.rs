@@ -114,12 +114,21 @@ pub struct RendererState {
     start: Timer,
     delta_time: f32,
     fingers: Vec<Finger>,
+    movement_input: PlayerMovementInput,
     is_locked: bool,
     print_statistics: bool,
     simulation: WorkerId,
 
     /// WARNING: order matters. This must be dropped last!
     window: Window,
+}
+
+#[derive(Default)]
+struct PlayerMovementInput {
+    forward: f32,
+    left: f32,
+    back: f32,
+    right: f32,
 }
 
 struct Finger {
@@ -355,6 +364,7 @@ impl RendererState {
             start,
             delta_time,
             fingers: Vec::new(),
+            movement_input: PlayerMovementInput::default(),
             is_locked: false,
             print_statistics: true,
             simulation,
@@ -427,6 +437,20 @@ impl RendererState {
                                     diameter,
                                     Some(self.fingers[index].previous_position),
                                 );
+                            }
+                        }
+
+                        {
+                            let speed = self.delta_time * 100.0;
+                            let vectors = self.camera.computed_vectors();
+
+                            let forward = self.movement_input.forward - self.movement_input.back;
+                            let right = self.movement_input.right - self.movement_input.left;
+
+                            let delta = vectors.direction * forward + vectors.right * right;
+
+                            if delta.length_squared() > 0.1 * 0.1 {
+                                self.camera.position += delta.normalize() * speed;
                             }
                         }
 
@@ -678,14 +702,15 @@ impl RendererState {
                             self.window.set_cursor_grab(CursorGrabMode::None).unwrap();
                             self.is_locked = false;
                         }
-                        let speed = self.delta_time * 100.0;
                         if let Key::Character(str) = event.logical_key {
                             let vectors = self.camera.computed_vectors();
+
+                            let amount = if event.state.is_pressed() { 1.0 } else { 0.0 };
                             match str.as_str() {
-                                "w" => self.camera.position += vectors.direction * speed,
-                                "a" => self.camera.position -= vectors.right * speed,
-                                "s" => self.camera.position -= vectors.direction * speed,
-                                "d" => self.camera.position += vectors.right * speed,
+                                "w" => self.movement_input.forward = amount,
+                                "a" => self.movement_input.left = amount,
+                                "s" => self.movement_input.back = amount,
+                                "d" => self.movement_input.right = amount,
                                 "p" => {
                                     if event.state.is_pressed() {
                                         self.print_statistics ^= true;
