@@ -83,6 +83,8 @@ pub enum Block {
     Air,
     Dirt,
     Stone,
+    Button,
+    Water,
 }
 
 impl Block {
@@ -91,6 +93,8 @@ impl Block {
             Block::Air => true,
             Block::Dirt => false,
             Block::Stone => false,
+            Block::Button => false,
+            Block::Water => false,
         }
     }
 }

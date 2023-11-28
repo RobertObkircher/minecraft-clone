@@ -60,6 +60,8 @@ impl ChunkMesh {
                     Block::Air => unreachable!(),
                     Block::Dirt => [[1, 0],[1, 0],[0, 0],[0, 1],[1, 0],[1, 0]],
                     Block::Stone => [[1, 1],[1, 1],[1, 1],[1, 1],[1, 1],[1, 1]],
+                    Block::Button => [[0, 2],[0, 2],[0, 2],[0, 2],[0, 2],[0, 2]],
+                    Block::Water => [[1, 2],[1, 2],[1, 2],[1, 2],[1, 2],[1, 2]],
                 }[face_index as usize];
 
                 let offset = u16::try_from(vertices.len()).unwrap();
@@ -70,8 +72,8 @@ impl ChunkMesh {
                     pos[1] += xyz.1 as f32;
                     pos[2] += xyz.2 as f32;
 
-                    let u_tiles = 2.0;
-                    let v_tiles = 2.0;
+                    let u_tiles = 4.0;
+                    let v_tiles = 4.0;
                     tex_coord[0] += texture[0] as f32;
                     tex_coord[1] += texture[1] as f32;
                     tex_coord[0] /= u_tiles;
@@ -288,6 +290,8 @@ impl GuiMesh {
                 Block::Air => unreachable!(),
                 Block::Dirt => [[1, 0], [1, 0], [0, 0], [0, 1], [1, 0], [1, 0]],
                 Block::Stone => [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]],
+                Block::Button => [[0, 2],[0, 2],[0, 2],[0, 2],[0, 2],[0, 2]],
+                Block::Water => [[1, 2],[1, 2],[1, 2],[1, 2],[1, 2],[1, 2]],
             }[face_index as usize];
 
             let offset = u16::try_from(vertices.len()).unwrap();
@@ -302,8 +306,8 @@ impl GuiMesh {
                 pos[1] += xyz.y;
                 pos[2] += xyz.z;
 
-                let u_tiles = 2.0;
-                let v_tiles = 2.0;
+                let u_tiles = 4.0;
+                let v_tiles = 4.0;
                 tex_coord[0] += texture[0] as f32;
                 tex_coord[1] += texture[1] as f32;
                 tex_coord[0] /= u_tiles;

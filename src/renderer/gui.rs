@@ -11,6 +11,7 @@ pub struct Gui {
 #[derive(Eq, PartialEq)]
 pub enum ElementId {
     Movement,
+    Center,
 }
 
 pub struct UiElement {
@@ -34,13 +35,31 @@ impl Gui {
             id: ElementId::Movement,
             center,
             size,
-            block: Block::Stone,
+            block: Block::Button,
         };
+
+        let mut elements = vec![movement];
+
+        let size = 0.01 * half_size.min_element();
+        for i in -2..=2 {
+            elements.push(UiElement {
+                id: ElementId::Center,
+                center: Vec2::X * 2.0 * size * i as f32,
+                size,
+                block: Block::Button,
+            });
+            elements.push(UiElement {
+                id: ElementId::Center,
+                center: Vec2::Y * 2.0 * size * i as f32,
+                size,
+                block: Block::Button,
+            });
+        }
 
         Self {
             distance,
             half_size,
-            elements: vec![movement],
+            elements,
         }
     }
 

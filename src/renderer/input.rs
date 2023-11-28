@@ -247,6 +247,7 @@ impl Input {
                 let action = if let Some((element, _to_finger)) = gui.closest_element(location) {
                     match element.id {
                         ElementId::Movement => FingerAction::PlayerMovement,
+                        ElementId::Center => FingerAction::ShortWorldTab,
                     }
                 } else {
                     FingerAction::ShortWorldTab
