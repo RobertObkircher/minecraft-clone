@@ -1,6 +1,6 @@
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 
 #[derive(Debug)]
 pub struct Camera {
@@ -85,5 +85,16 @@ impl Camera {
         let view = Mat4::look_to_rh(self.position, vs.direction, vs.up);
 
         projection * view
+    }
+
+    pub fn half_size_at_distance(&self, distance: f32) -> Vec2 {
+        debug_assert!(distance > 0.0);
+
+        // O..opposite, A..adjacent, H hypotenuse
+        // tan(aplha) = O / A
+
+        let height = (self.fov_y_radians / 2.0).tan() * distance;
+        let width = self.aspect_ratio * height;
+        Vec2::new(width, height)
     }
 }

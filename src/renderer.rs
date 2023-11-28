@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::mem;
 use std::mem::size_of;
 use std::time::Duration;
@@ -36,6 +36,8 @@ use texture::BlockTexture;
 
 use crate::generator::terrain::WorldSeed;
 use crate::generator::ChunkInfoBytes;
+use crate::renderer::gui::Gui;
+use crate::renderer::mesh::GuiMesh;
 use crate::simulation::chunk::Chunk;
 use crate::simulation::position::{BlockPosition, ChunkPosition};
 use crate::simulation::PlayerCommand;
@@ -44,6 +46,7 @@ use crate::timer::Timer;
 use crate::worker::{MessageTag, Worker, WorkerId, WorkerMessage};
 
 mod camera;
+mod gui;
 pub mod mesh;
 #[cfg(feature = "reload")]
 mod reload;
@@ -91,12 +94,15 @@ pub struct RendererState {
     render_pipeline: Option<RenderPipeline>,
     pipeline_layout: PipelineLayout,
     swapchain_format: TextureFormat,
-    bind_group: BindGroup,
+    chunk_bind_group: BindGroup,
+    ui_bind_group: BindGroup,
     chunk_bind_group_layout: BindGroupLayout,
     statistics: Statistics,
     meshes: HashMap<ChunkPosition, ChunkMesh>,
     camera: Camera,
-    projection_view_matrix_uniform_buffer: Buffer,
+    ui_camera: Camera,
+    chunk_projection_view_matrix_uniform_buffer: Buffer,
+    ui_projection_view_matrix_uniform_buffer: Buffer,
     player_chunk: ChunkPosition,
     player_chunk_uniform_buffer: Buffer,
     start: Timer,
@@ -106,6 +112,8 @@ pub struct RendererState {
     is_locked: bool,
     print_statistics: bool,
     simulation: WorkerId,
+    gui: Gui,
+    gui_mesh: Option<GuiMesh>,
 
     /// WARNING: order matters. This must be dropped last!
     window: Window,
@@ -269,7 +277,7 @@ impl RendererState {
         camera.turn_right(-TAU / 3.0);
         camera.turn_up(-PI / 2.0 / 3.0);
 
-        let projection_view_matrix_uniform_buffer =
+        let chunk_projection_view_matrix_uniform_buffer =
             device.create_buffer_init(&BufferInitDescriptor {
                 label: Some("Uniform Buffer"),
                 contents: bytemuck::cast_slice(camera.projection_view_matrix().as_ref()),
@@ -289,12 +297,44 @@ impl RendererState {
             "blocks.bmp",
         );
 
-        let bind_group = device.create_bind_group(&BindGroupDescriptor {
+        let chunk_bind_group = device.create_bind_group(&BindGroupDescriptor {
             layout: &bind_group_layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: projection_view_matrix_uniform_buffer.as_entire_binding(),
+                    resource: chunk_projection_view_matrix_uniform_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: player_chunk_uniform_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::TextureView(&blocks.view),
+                },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Sampler(&blocks.sampler),
+                },
+            ],
+            label: None,
+        });
+
+        let mut ui_camera = Camera::new(Vec3::ZERO, PI / 20.0);
+        ui_camera.set_aspect_ratio(config.width, config.height);
+        ui_camera.turn_right(-FRAC_PI_2);
+        let ui_projection_view_matrix_uniform_buffer =
+            device.create_buffer_init(&BufferInitDescriptor {
+                label: Some("Uniform Buffer"),
+                contents: bytemuck::cast_slice(ui_camera.projection_view_matrix().as_ref()),
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            });
+        let ui_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            layout: &bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: ui_projection_view_matrix_uniform_buffer.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 1,
@@ -331,6 +371,8 @@ impl RendererState {
         // TODO compute delta_time
         let delta_time = Duration::from_millis(16).as_secs_f32();
 
+        let gui = Gui::for_camera(&ui_camera);
+
         Self {
             config,
             surface,
@@ -342,12 +384,15 @@ impl RendererState {
             render_pipeline_reloader,
             pipeline_layout,
             swapchain_format,
-            bind_group,
+            chunk_bind_group,
+            ui_bind_group,
             chunk_bind_group_layout,
             statistics,
             meshes: HashMap::new(),
             camera,
-            projection_view_matrix_uniform_buffer,
+            ui_camera,
+            chunk_projection_view_matrix_uniform_buffer,
+            ui_projection_view_matrix_uniform_buffer,
             player_chunk,
             player_chunk_uniform_buffer,
             start,
@@ -357,6 +402,8 @@ impl RendererState {
             is_locked: false,
             print_statistics: true,
             simulation,
+            gui,
+            gui_mesh: None,
             window,
         }
     }
@@ -377,9 +424,19 @@ impl RendererState {
                         self.config.height = new_size.height.max(MIN_SURFACE_SIZE);
                         self.camera
                             .set_aspect_ratio(self.config.width, self.config.height);
+                        self.ui_camera
+                            .set_aspect_ratio(self.config.width, self.config.height);
 
                         self.surface.configure(&self.device, &self.config);
                         self.depth = create_depth_texture(&self.device, &self.config);
+
+                        self.gui = Gui::for_camera(&self.ui_camera);
+
+                        self.queue.write_buffer(
+                            &self.ui_projection_view_matrix_uniform_buffer,
+                            0,
+                            &bytemuck::cast_slice(self.ui_camera.projection_view_matrix().as_ref()),
+                        );
 
                         // necessary on macos, according to hello triangle example
                         self.window.request_redraw();
@@ -545,7 +602,7 @@ impl RendererState {
                         }
                         // must happen after the player chunk uniform update to avoid one invalid frame
                         self.queue.write_buffer(
-                            &self.projection_view_matrix_uniform_buffer,
+                            &self.chunk_projection_view_matrix_uniform_buffer,
                             0,
                             &bytemuck::cast_slice(self.camera.projection_view_matrix().as_ref()),
                         );
@@ -580,7 +637,7 @@ impl RendererState {
 
                             pass.push_debug_group("chunks setup");
                             pass.set_pipeline(render_pipeline);
-                            pass.set_bind_group(0, &self.bind_group, &[]);
+                            pass.set_bind_group(0, &self.chunk_bind_group, &[]);
                             pass.pop_debug_group();
                             pass.insert_debug_marker("before chunks");
 
@@ -594,11 +651,65 @@ impl RendererState {
                                 pass.set_bind_group(1, &mesh.bind_group, &[]);
                                 pass.pop_debug_group();
                                 pass.insert_debug_marker(&format!("Drawing chunk {position:?}"));
-                                pass.draw_indexed(0..mesh.index_count as u32, 0, 0..1);
+                                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                             }
                         }
 
                         self.queue.submit(Some(encoder.finish()));
+
+                        let mut encoder = self
+                            .device
+                            .create_command_encoder(&CommandEncoderDescriptor { label: None });
+                        {
+                            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                                label: Some("render GUI"),
+                                color_attachments: &[Some(RenderPassColorAttachment {
+                                    view: &view,
+                                    resolve_target: None,
+                                    ops: Operations {
+                                        load: LoadOp::Load,
+                                        store: StoreOp::Store,
+                                    },
+                                })],
+                                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                                    view: &self.depth.1,
+                                    depth_ops: Some(Operations {
+                                        load: LoadOp::Clear(1.0),
+                                        store: StoreOp::Store,
+                                    }),
+                                    stencil_ops: None,
+                                }),
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                            });
+
+                            pass.push_debug_group("GUI setup");
+                            pass.set_pipeline(render_pipeline);
+                            pass.set_bind_group(0, &self.ui_bind_group, &[]);
+                            pass.pop_debug_group();
+                            pass.insert_debug_marker("before GUI");
+
+                            let (vertices, indices) = GuiMesh::generate(&self.gui);
+                            let mesh = self.gui_mesh.take();
+                            self.gui_mesh = Some(GuiMesh::upload_to_gpu(
+                                &self.device,
+                                self.player_chunk,
+                                &vertices,
+                                &indices,
+                                &self.chunk_bind_group_layout,
+                                mesh.map(|it| (it, &self.queue)),
+                            ));
+                            let mesh = self.gui_mesh.as_ref().unwrap();
+
+                            pass.push_debug_group("GUI");
+                            pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint16);
+                            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                            pass.set_bind_group(1, &mesh.bind_group, &[]);
+                            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                            pass.pop_debug_group();
+                        }
+                        self.queue.submit(Some(encoder.finish()));
+
                         frame.present();
 
                         let frame_time = self.start.elapsed();
@@ -728,8 +839,6 @@ impl RendererState {
                             self.is_locked = false;
                         }
                         if let Key::Character(str) = event.logical_key {
-                            let vectors = self.camera.computed_vectors();
-
                             let pressed = event.state.is_pressed();
                             let amount = if pressed { 1.0 } else { 0.0 };
                             match str.as_str() {

@@ -1,9 +1,11 @@
+use crate::renderer::gui::Gui;
 use crate::simulation::chunk::{Block, Chunk, Transparency};
 use crate::simulation::position::ChunkPosition;
 use crate::simulation::world::ChunkNeighbours;
 use crate::statistics::ChunkMeshInfo;
 use crate::timer::Timer;
 use bytemuck::{Pod, Zeroable};
+use glam::Vec3;
 use std::mem;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
@@ -14,6 +16,14 @@ use wgpu::{
 };
 
 pub struct ChunkMesh {
+    pub vertex_buffer: Buffer,
+    pub index_buffer: Buffer,
+    pub uniform_buffer: Buffer,
+    pub bind_group: BindGroup,
+    pub index_count: u32,
+}
+
+pub struct GuiMesh {
     pub vertex_buffer: Buffer,
     pub index_buffer: Buffer,
     pub uniform_buffer: Buffer,
@@ -256,6 +266,145 @@ impl ChunkMesh {
                 count: None,
             }],
         };
+}
+
+impl GuiMesh {
+    #[rustfmt::skip]
+    pub fn generate(gui: &Gui) -> (Vec<Vertex>, Vec<u16>) {
+        let mut vertices = vec![];
+        let mut indices: Vec<u16> = vec![];
+
+        let mut add_face = |xyz: Vec3, face_index: u32, block: Block, size: f32| {
+            let is = [
+                [8, 9, 10, 10, 11, 8],
+                [12, 13, 14, 14, 15, 12],
+                [16, 17, 18, 18, 19, 16],
+                [20, 21, 22, 22, 23, 20],
+                [0, 1, 2, 2, 3, 0],
+                [4, 5, 6, 6, 7, 4],
+            ][face_index as usize];
+
+            let texture = match block {
+                Block::Air => unreachable!(),
+                Block::Dirt => [[1, 0], [1, 0], [0, 0], [0, 1], [1, 0], [1, 0]],
+                Block::Stone => [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]],
+            }[face_index as usize];
+
+            let offset = u16::try_from(vertices.len()).unwrap();
+            indices.extend((0..6).map(|i| i + offset));
+            vertices.extend(is.iter().map(|i| {
+                let (mut pos, mut tex_coord) = VERTICES[*i as usize];
+                pos[0] *= size;
+                pos[1] *= size;
+                pos[2] *= size;
+
+                pos[0] += xyz.x;
+                pos[1] += xyz.y;
+                pos[2] += xyz.z;
+
+                let u_tiles = 2.0;
+                let v_tiles = 2.0;
+                tex_coord[0] += texture[0] as f32;
+                tex_coord[1] += texture[1] as f32;
+                tex_coord[0] /= u_tiles;
+                tex_coord[1] /= v_tiles;
+                Vertex {
+                    pos,
+                    tex_coord,
+                    face_index,
+                }
+            }));
+        };
+
+        for e in gui.elements.iter() {
+            let camera_distance = -gui.distance;
+            let xyz = Vec3::new(e.center.x - e.size * 0.5, e.center.y - e.size * 0.5, camera_distance);
+            for face in 0..6 {
+                add_face(xyz, face, e.block, e.size);
+            }
+        }
+
+        (vertices, indices)
+    }
+
+    pub fn upload_to_gpu(
+        device: &Device,
+        position: ChunkPosition,
+        vertices: &[Vertex],
+        indices: &[u16],
+        bind_group_layout: &BindGroupLayout,
+        recycle_mesh: Option<(GuiMesh, &Queue)>,
+    ) -> GuiMesh {
+        let vertex_bytes: &[u8] = bytemuck::cast_slice(&vertices);
+        let index_bytes: &[u8] = bytemuck::cast_slice(&indices);
+        let uniform_data = position.block().index().extend(0);
+        let uniform_bytes: &[u8] = bytemuck::cast_slice(uniform_data.as_ref());
+
+        let (vertex_buffer, index_buffer, uniform_buffer, bind_group) =
+            if let Some((recycle_mesh, queue)) = recycle_mesh {
+                let vertex_buffer = Some(recycle_mesh.vertex_buffer)
+                    .filter(|it| it.size() >= vertex_bytes.len() as u64);
+                vertex_buffer
+                    .iter()
+                    .for_each(|it| queue.write_buffer(&it, 0, vertex_bytes));
+
+                let index_buffer = Some(recycle_mesh.index_buffer)
+                    .filter(|it| it.size() >= index_bytes.len() as u64);
+                index_buffer
+                    .iter()
+                    .for_each(|it| queue.write_buffer(&it, 0, index_bytes));
+
+                let uniform_buffer = recycle_mesh.uniform_buffer;
+                queue.write_buffer(&uniform_buffer, 0, uniform_bytes);
+
+                (
+                    vertex_buffer,
+                    index_buffer,
+                    uniform_buffer,
+                    recycle_mesh.bind_group,
+                )
+            } else {
+                let uniform_buffer = device.create_buffer_init(&BufferInitDescriptor {
+                    label: Some("GUI Uniform Buffer"),
+                    contents: uniform_bytes,
+                    usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                });
+
+                let bind_group = device.create_bind_group(&BindGroupDescriptor {
+                    layout: &bind_group_layout,
+                    entries: &[BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    }],
+                    label: None,
+                });
+                (None, None, uniform_buffer, bind_group)
+            };
+
+        let vertex_buffer = vertex_buffer.unwrap_or_else(|| {
+            device.create_buffer_init(&BufferInitDescriptor {
+                label: Some("GUI Vertex Buffer"),
+                contents: vertex_bytes,
+                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            })
+        });
+
+        let index_buffer = index_buffer.unwrap_or_else(|| {
+            device.create_buffer_init(&BufferInitDescriptor {
+                label: Some("GUI Index Buffer"),
+                contents: index_bytes,
+                usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+            })
+        });
+
+        Self {
+            vertex_buffer,
+            index_buffer,
+            uniform_buffer,
+            bind_group,
+            index_count: indices.len().try_into().unwrap(),
+        }
+    }
 }
 
 const fn vertex(pos: [i8; 3], tc: [i8; 2]) -> ([f32; 4], [f32; 2]) {
