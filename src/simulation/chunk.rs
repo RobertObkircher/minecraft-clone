@@ -85,6 +85,7 @@ pub enum Block {
     Stone,
     Button,
     Water,
+    Sand,
 }
 
 impl Block {
@@ -95,6 +96,7 @@ impl Block {
             Block::Stone => false,
             Block::Button => false,
             Block::Water => false,
+            Block::Sand => false,
         }
     }
 }

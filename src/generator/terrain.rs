@@ -106,7 +106,11 @@ impl TerrainGenerator {
                         if density > 0.1 {
                             Block::Stone
                         } else if density > 0.0 {
-                            Block::Dirt
+                            if block_y < 1 {
+                                Block::Sand
+                            } else {
+                                Block::Dirt
+                            }
                         } else {
                             Block::Water
                         }

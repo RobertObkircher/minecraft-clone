@@ -62,6 +62,7 @@ impl ChunkMesh {
                     Block::Stone => [[1, 1],[1, 1],[1, 1],[1, 1],[1, 1],[1, 1]],
                     Block::Button => [[0, 2],[0, 2],[0, 2],[0, 2],[0, 2],[0, 2]],
                     Block::Water => [[1, 2],[1, 2],[1, 2],[1, 2],[1, 2],[1, 2]],
+                    Block::Sand => [[2, 0],[2, 0],[2, 0],[2, 0],[2, 0],[2, 0]],
                 }[face_index as usize];
 
                 let offset = u16::try_from(vertices.len()).unwrap();
@@ -292,6 +293,7 @@ impl GuiMesh {
                 Block::Stone => [[1, 1], [1, 1], [1, 1], [1, 1], [1, 1], [1, 1]],
                 Block::Button => [[0, 2],[0, 2],[0, 2],[0, 2],[0, 2],[0, 2]],
                 Block::Water => [[1, 2],[1, 2],[1, 2],[1, 2],[1, 2],[1, 2]],
+                Block::Sand => [[2, 0],[2, 0],[2, 0],[2, 0],[2, 0],[2, 0]],
             }[face_index as usize];
 
             let offset = u16::try_from(vertices.len()).unwrap();
