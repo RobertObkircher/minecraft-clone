@@ -28,8 +28,8 @@ pub struct SimulationState {
 #[derive(Copy, Clone, Debug, Zeroable, Pod)]
 pub struct PlayerCommand {
     pub player_chunk: [i32; 3],
-    pub camera_position: [f32; 3],
-    pub camera_direction: [f32; 3],
+    pub position: [f32; 3],
+    pub direction: [f32; 3],
     pub diameter: i32,
 }
 
@@ -138,8 +138,8 @@ impl SimulationState {
 
                 let hit = self.world.find_nearest_block_on_ray(
                     ChunkPosition::from_chunk_index(IVec3::from(c.player_chunk)),
-                    Vec3::from(c.camera_position),
-                    Vec3::from(c.camera_direction),
+                    Vec3::from(c.position),
+                    Vec3::from(c.direction),
                     200,
                 );
 

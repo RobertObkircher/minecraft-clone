@@ -1,12 +1,10 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
-use std::mem;
-use std::mem::size_of;
 use std::time::Duration;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{DVec2, IVec3, Vec3};
+use glam::{IVec3, Vec3};
 use log::info;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
@@ -22,9 +20,7 @@ use wgpu::{
     Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
     TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
-use winit::event::{
-    DeviceEvent, DeviceId, ElementState, Event, MouseButton, Touch, TouchPhase, WindowEvent,
-};
+use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
 use winit::event_loop::EventLoopWindowTarget;
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, Window};
@@ -35,17 +31,18 @@ use texture::BlockTexture;
 
 use crate::generator::terrain::WorldSeed;
 use crate::generator::ChunkInfoBytes;
-use crate::renderer::gui::{ElementId, Gui};
+use crate::renderer::gui::Gui;
+use crate::renderer::input::Input;
 use crate::renderer::mesh::GuiMesh;
 use crate::simulation::chunk::Chunk;
 use crate::simulation::position::{BlockPosition, ChunkPosition};
-use crate::simulation::PlayerCommand;
 use crate::statistics::{ChunkInfo, FrameInfo, Statistics};
 use crate::timer::Timer;
 use crate::worker::{MessageTag, Worker, WorkerId, WorkerMessage};
 
 mod camera;
 mod gui;
+mod input;
 pub mod mesh;
 #[cfg(feature = "reload")]
 mod reload;
@@ -106,8 +103,7 @@ pub struct RendererState {
     player_chunk_uniform_buffer: Buffer,
     start: Timer,
     delta_time: f32,
-    fingers: Vec<Finger>,
-    controller: PlayerController,
+    input: Input,
     is_locked: bool,
     print_statistics: bool,
     simulation: WorkerId,
@@ -116,37 +112,6 @@ pub struct RendererState {
 
     /// WARNING: order matters. This must be dropped last!
     window: Window,
-}
-
-#[derive(Default)]
-struct PlayerController {
-    forward: f32,
-    left: f32,
-    back: f32,
-    right: f32,
-    exploding: Option<(f32, Option<(DeviceId, u64)>)>,
-    creating: Option<f32>,
-}
-
-struct Finger {
-    id: (DeviceId, u64),
-    normalized_previous_position: DVec2,
-    total_distance: f64,
-    start: Timer,
-    action: FingerAction,
-}
-
-#[derive(Eq, PartialEq)]
-enum FingerAction {
-    ShortWorldTab,
-    LongWorldTab,
-    PlayerMovement,
-    CameraMovement,
-}
-
-impl Finger {
-    const LONG_TAP: Duration = Duration::from_millis(400);
-    const CUTOFF: f64 = 0.05;
 }
 
 #[repr(C)]
@@ -400,8 +365,7 @@ impl RendererState {
             player_chunk_uniform_buffer,
             start,
             delta_time,
-            fingers: Vec::new(),
-            controller: PlayerController::default(),
+            input: Input::default(),
             is_locked: false,
             print_statistics: true,
             simulation,
@@ -450,90 +414,14 @@ impl RendererState {
                     WindowEvent::RedrawRequested => {
                         self.window.request_redraw();
 
-                        let mut movement = Vec3::ZERO;
-
-                        // TODO where should this happen?
-                        {
-                            // movement
-                            if let Some(index) = self
-                                .fingers
-                                .iter()
-                                .position(|f| f.action == FingerAction::PlayerMovement)
-                            {
-                                let finger = self.fingers[index].normalized_previous_position;
-                                let to_finger = self.gui.movement_element_to_finger(finger);
-                                let direction =
-                                    self.camera.rotate_movement(to_finger).clamp_length_max(1.0);
-
-                                movement += direction;
-                            }
-
-                            // destruction
-                            if let Some(index) = self.fingers.iter().position(|f| {
-                                f.action == FingerAction::ShortWorldTab
-                                    && f.start.elapsed() >= Finger::LONG_TAP
-                            }) {
-                                self.fingers[index].action = FingerAction::LongWorldTab;
-
-                                let second = self.fingers[index..]
-                                    .iter()
-                                    .position(|f| f.action == FingerAction::ShortWorldTab);
-
-                                let diameter = if let Some(second) = second {
-                                    self.fingers[second].action = FingerAction::LongWorldTab;
-                                    self.controller.exploding =
-                                        Some((0.0, Some(self.fingers[index].id)));
-                                    -20
-                                } else {
-                                    -1
-                                };
-
-                                self.send_player_command(
-                                    worker,
-                                    diameter,
-                                    Some(self.fingers[index].normalized_previous_position),
-                                );
-                            }
-                        }
-
-                        {
-                            let vectors = self.camera.computed_vectors();
-
-                            let forward = self.controller.forward - self.controller.back;
-                            let right = self.controller.right - self.controller.left;
-
-                            let delta = vectors.direction * forward + vectors.right * right;
-                            movement += delta;
-
-                            let movement_speed = self.delta_time * 100.0;
-                            self.camera.position += movement * movement_speed;
-
-                            if let Some((accumulator, finger)) = &mut self.controller.exploding {
-                                *accumulator += self.delta_time;
-                                let time = 0.05;
-                                if *accumulator > time {
-                                    *accumulator -= time;
-
-                                    let position = finger.map(|it| {
-                                        self.fingers
-                                            .iter()
-                                            .find(|f| f.id == it)
-                                            .unwrap()
-                                            .normalized_previous_position
-                                    });
-
-                                    self.send_player_command(worker, -20, position);
-                                }
-                            }
-                            if let Some(accumulator) = &mut self.controller.creating {
-                                *accumulator += self.delta_time;
-                                let time = 0.3;
-                                if *accumulator > time {
-                                    *accumulator -= time;
-                                    self.send_player_command(worker, 20, None);
-                                }
-                            }
-                        }
+                        self.input.start_of_frame(
+                            worker,
+                            self.simulation,
+                            self.player_chunk,
+                            &mut self.camera,
+                            &self.gui,
+                            self.delta_time,
+                        );
 
                         #[cfg(target_arch = "wasm32")]
                         if self.is_locked
@@ -744,17 +632,15 @@ impl RendererState {
                         // TODO winit bug? changing cursor grab mode here didn't work. the cursor gets stuck when reentering after alt-tab
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
-                        if self.is_locked
-                            && state == ElementState::Pressed
-                            && button == MouseButton::Left
-                        {
-                            self.send_player_command(worker, -1, None);
-                        }
-                        if self.is_locked
-                            && state == ElementState::Pressed
-                            && button == MouseButton::Right
-                        {
-                            self.send_player_command(worker, 1, None);
+                        if self.is_locked {
+                            self.input.mouse(
+                                worker,
+                                self.simulation,
+                                self.player_chunk,
+                                &self.camera,
+                                state,
+                                button,
+                            );
                         }
 
                         // TODO account for device_id
@@ -771,137 +657,32 @@ impl RendererState {
                             }
                         }
                     }
-                    WindowEvent::Touch(Touch {
-                        device_id,
-                        phase,
-                        location,
-                        force: _,
-                        id,
-                    }) => {
-                        let id = (device_id, id);
-
-                        let size = self.window.inner_size();
-
-                        // TODO is this correct?
-                        let location = DVec2::new(
-                            2.0 * location.x / size.width as f64 - 1.0,
-                            1.0 - 2.0 * location.y / size.height as f64,
+                    WindowEvent::Touch(t) => {
+                        self.input.touch(
+                            &self.window,
+                            t,
+                            worker,
+                            self.simulation,
+                            self.player_chunk,
+                            &mut self.camera,
+                            &self.gui,
+                            self.delta_time,
                         );
-                        // I was able to trigger these in the browser
-                        // debug_assert!(location.x.abs() <= 1.1);
-                        // debug_assert!(location.y.abs() <= 1.1);
-
-                        match phase {
-                            TouchPhase::Started => {
-                                let action = if let Some((element, _to_finger)) =
-                                    self.gui.closest_element(location)
-                                {
-                                    match element.id {
-                                        ElementId::Movement => FingerAction::PlayerMovement,
-                                    }
-                                } else {
-                                    FingerAction::ShortWorldTab
-                                };
-
-                                self.fingers.push(Finger {
-                                    id,
-                                    normalized_previous_position: location,
-                                    total_distance: 0.0,
-                                    start: Timer::now(),
-                                    action,
-                                });
-                            }
-                            TouchPhase::Moved => {
-                                let position =
-                                    self.fingers.iter().position(|f| f.id == id).unwrap();
-                                let finger = self.fingers.get_mut(position).unwrap();
-
-                                let old = mem::replace(
-                                    &mut finger.normalized_previous_position,
-                                    location,
-                                );
-                                let dx = location.x - old.x;
-                                let dy = location.y - old.y;
-                                finger.total_distance += (dx * dx + dy * dy).sqrt();
-
-                                if finger.total_distance >= Finger::CUTOFF
-                                    && finger.action == FingerAction::ShortWorldTab
-                                {
-                                    finger.action = FingerAction::CameraMovement;
-                                }
-
-                                if finger.action == FingerAction::CameraMovement {
-                                    let speed = self.delta_time * 60.0;
-                                    self.camera.turn_right(-dx as f32 * speed);
-                                    self.camera.turn_up(-dy as f32 * speed);
-                                }
-                            }
-                            TouchPhase::Ended | TouchPhase::Cancelled => {
-                                let position =
-                                    self.fingers.iter().position(|f| f.id == id).unwrap();
-                                let finger = self.fingers.remove(position);
-
-                                if self
-                                    .controller
-                                    .exploding
-                                    .map(|it| it.1 == Some(finger.id))
-                                    .unwrap_or(false)
-                                {
-                                    self.controller.exploding = None;
-                                }
-
-                                if finger.action == FingerAction::ShortWorldTab {
-                                    // TODO what if this is a long press?
-                                    let elapsed = finger.start.elapsed();
-                                    if elapsed < Finger::LONG_TAP {
-                                        self.send_player_command(worker, 1, Some(location));
-                                        // no need to mark finger as tapped because it removed from the list
-                                    }
-                                }
-                            }
-                        }
                     }
                     WindowEvent::KeyboardInput { event, .. } => {
                         if self.is_locked && event.logical_key == Key::Named(NamedKey::Escape) {
                             info!("Unlocking cursor");
                             self.window.set_cursor_grab(CursorGrabMode::None).unwrap();
                             self.is_locked = false;
-                        }
-                        if let Key::Character(str) = event.logical_key {
-                            let pressed = event.state.is_pressed();
-                            let amount = if pressed { 1.0 } else { 0.0 };
-                            match str.as_str() {
-                                "w" => self.controller.forward = amount,
-                                "a" => self.controller.left = amount,
-                                "s" => self.controller.back = amount,
-                                "d" => self.controller.right = amount,
-                                "p" => {
-                                    if pressed {
-                                        self.print_statistics ^= true;
-                                        #[cfg(target_arch = "wasm32")]
-                                        if !self.print_statistics {
-                                            crate::wasm::hide_statistics();
-                                        }
-                                    }
-                                }
-                                "q" => {
-                                    let accumulator = self.controller.exploding.map(|it| it.0);
-                                    if pressed && accumulator.is_none() {
-                                        self.send_player_command(worker, -20, None);
-                                    }
-                                    self.controller.exploding =
-                                        pressed.then_some((accumulator.unwrap_or(-0.1), None));
-                                }
-                                "e" => {
-                                    let accumulator = self.controller.creating;
-                                    if pressed && accumulator.is_none() {
-                                        self.send_player_command(worker, 20, None);
-                                    }
-                                    self.controller.creating =
-                                        pressed.then_some(accumulator.unwrap_or(0.0));
-                                }
-                                _ => {}
-                            }
+                        } else {
+                            self.input.keyboard(
+                                event,
+                                worker,
+                                self.simulation,
+                                self.player_chunk,
+                                &self.camera,
+                                &mut self.print_statistics,
+                            );
                         }
                     }
                     _ => {}
@@ -910,42 +691,14 @@ impl RendererState {
             Event::DeviceEvent { event, .. } => match event {
                 DeviceEvent::MouseMotion { delta } => {
                     if self.is_locked && self.window.has_focus() {
-                        let speed = self.delta_time * 0.1;
-                        self.camera.turn_right(delta.0 as f32 * speed);
-                        self.camera.turn_up(-delta.1 as f32 * speed);
+                        self.input
+                            .mouse_motion(&mut self.camera, self.delta_time, delta);
                     }
                 }
                 _ => {}
             },
             _ => {}
         }
-    }
-
-    fn send_player_command(&self, worker: &impl Worker, diameter: i32, location: Option<DVec2>) {
-        let (camera_position, camera_direction) = location
-            .map(|it| self.screen_to_world(it))
-            .unwrap_or_else(|| {
-                (
-                    self.camera.position,
-                    self.camera.computed_vectors().direction,
-                )
-            });
-
-        let command = PlayerCommand {
-            player_chunk: self.player_chunk.index().to_array(),
-            camera_position: camera_position.to_array(),
-            camera_direction: camera_direction.to_array(),
-            diameter,
-        };
-        info!("send_player_command: {command:?}");
-
-        let command_bytes = bytemuck::bytes_of(&command);
-        let mut message_bytes = [0u8; size_of::<PlayerCommand>() + 1];
-        message_bytes[0..size_of::<PlayerCommand>()].copy_from_slice(command_bytes);
-        *message_bytes.last_mut().unwrap() = MessageTag::PlayerCommand as u8;
-
-        let message = Box::<[u8]>::from(message_bytes);
-        worker.send_message(self.simulation, message);
     }
 
     pub fn update(&mut self, _worker: &impl Worker, message: Option<WorkerMessage>) {
@@ -1013,23 +766,6 @@ impl RendererState {
             });
         }
         assert_eq!(remaining.len(), 1);
-    }
-
-    fn screen_to_world(&self, finger: DVec2) -> (Vec3, Vec3) {
-        let camera = &self.camera;
-
-        let inverse = self.camera.projection_view_matrix().inverse();
-
-        let world_position =
-            inverse.project_point3(Vec3::new(finger.x as f32, finger.y as f32, 0.0));
-
-        // from eye to near clipping plane
-        let direction = world_position - camera.position;
-
-        // in the center of the screen they should be equal, on the edges the new vector is longer
-        debug_assert!(direction.length() >= Camera::Z_NEAR);
-
-        (world_position, direction.normalize())
     }
 }
 
