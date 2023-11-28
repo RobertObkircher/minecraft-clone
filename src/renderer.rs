@@ -6,7 +6,7 @@ use std::mem::size_of;
 use std::time::Duration;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{IVec3, Vec3};
+use glam::{DVec2, IVec3, Vec3};
 use log::info;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
@@ -22,7 +22,6 @@ use wgpu::{
     Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
     TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
-use winit::dpi::PhysicalPosition;
 use winit::event::{
     DeviceEvent, DeviceId, ElementState, Event, MouseButton, Touch, TouchPhase, WindowEvent,
 };
@@ -36,7 +35,7 @@ use texture::BlockTexture;
 
 use crate::generator::terrain::WorldSeed;
 use crate::generator::ChunkInfoBytes;
-use crate::renderer::gui::Gui;
+use crate::renderer::gui::{ElementId, Gui};
 use crate::renderer::mesh::GuiMesh;
 use crate::simulation::chunk::Chunk;
 use crate::simulation::position::{BlockPosition, ChunkPosition};
@@ -131,19 +130,23 @@ struct PlayerController {
 
 struct Finger {
     id: (DeviceId, u64),
-    previous_position: PhysicalPosition<f64>,
+    normalized_previous_position: DVec2,
     total_distance: f64,
     start: Timer,
-    long_tapped: bool,
+    action: FingerAction,
+}
+
+#[derive(Eq, PartialEq)]
+enum FingerAction {
+    ShortWorldTab,
+    LongWorldTab,
+    PlayerMovement,
+    CameraMovement,
 }
 
 impl Finger {
     const LONG_TAP: Duration = Duration::from_millis(400);
-
-    fn cutoff(window: &Window) -> f64 {
-        let size = window.inner_size();
-        size.width.min(size.height) as f64 * 0.05
-    }
+    const CUTOFF: f64 = 0.05;
 }
 
 #[repr(C)]
@@ -447,35 +450,37 @@ impl RendererState {
                     WindowEvent::RedrawRequested => {
                         self.window.request_redraw();
 
+                        let mut movement = Vec3::ZERO;
+
                         // TODO where should this happen?
                         {
-                            let cutoff = Finger::cutoff(&self.window);
                             // movement
-                            if let Some(index) = self.fingers.iter().position(|f| {
-                                !f.long_tapped
-                                    && f.total_distance >= cutoff
-                                    && f.start.elapsed() >= Duration::from_secs(1)
-                            }) {
-                                let speed = self.delta_time * 20.0;
-                                let vs = self.camera.computed_vectors();
-                                let direction = (vs.direction + vs.up * 0.5).normalize();
-                                self.camera.position += direction * speed;
+                            if let Some(index) = self
+                                .fingers
+                                .iter()
+                                .position(|f| f.action == FingerAction::PlayerMovement)
+                            {
+                                let finger = self.fingers[index].normalized_previous_position;
+                                let to_finger = self.gui.movement_element_to_finger(finger);
+                                let direction =
+                                    self.camera.rotate_movement(to_finger).clamp_length_max(1.0);
+
+                                movement += direction;
                             }
 
                             // destruction
                             if let Some(index) = self.fingers.iter().position(|f| {
-                                !f.long_tapped
-                                    && f.total_distance < cutoff
+                                f.action == FingerAction::ShortWorldTab
                                     && f.start.elapsed() >= Finger::LONG_TAP
                             }) {
-                                self.fingers[index].long_tapped = true;
+                                self.fingers[index].action = FingerAction::LongWorldTab;
 
                                 let second = self.fingers[index..]
                                     .iter()
-                                    .position(|f| !f.long_tapped && f.total_distance < cutoff);
+                                    .position(|f| f.action == FingerAction::ShortWorldTab);
 
                                 let diameter = if let Some(second) = second {
-                                    self.fingers[second].long_tapped = true;
+                                    self.fingers[second].action = FingerAction::LongWorldTab;
                                     self.controller.exploding =
                                         Some((0.0, Some(self.fingers[index].id)));
                                     -20
@@ -486,23 +491,22 @@ impl RendererState {
                                 self.send_player_command(
                                     worker,
                                     diameter,
-                                    Some(self.fingers[index].previous_position),
+                                    Some(self.fingers[index].normalized_previous_position),
                                 );
                             }
                         }
 
                         {
-                            let speed = self.delta_time * 100.0;
                             let vectors = self.camera.computed_vectors();
 
                             let forward = self.controller.forward - self.controller.back;
                             let right = self.controller.right - self.controller.left;
 
                             let delta = vectors.direction * forward + vectors.right * right;
+                            movement += delta;
 
-                            if delta.length_squared() > 0.1 * 0.1 {
-                                self.camera.position += delta.normalize() * speed;
-                            }
+                            let movement_speed = self.delta_time * 100.0;
+                            self.camera.position += movement * movement_speed;
 
                             if let Some((accumulator, finger)) = &mut self.controller.exploding {
                                 *accumulator += self.delta_time;
@@ -515,7 +519,7 @@ impl RendererState {
                                             .iter()
                                             .find(|f| f.id == it)
                                             .unwrap()
-                                            .previous_position
+                                            .normalized_previous_position
                                     });
 
                                     self.send_player_command(worker, -20, position);
@@ -777,35 +781,59 @@ impl RendererState {
                         let id = (device_id, id);
 
                         let size = self.window.inner_size();
-                        let cutoff = size.width.min(size.height) as f64 * 0.05;
+
+                        // TODO is this correct?
+                        let location = DVec2::new(
+                            2.0 * location.x / size.width as f64 - 1.0,
+                            1.0 - 2.0 * location.y / size.height as f64,
+                        );
+                        // I was able to trigger these in the browser
+                        // debug_assert!(location.x.abs() <= 1.1);
+                        // debug_assert!(location.y.abs() <= 1.1);
 
                         match phase {
                             TouchPhase::Started => {
+                                let action = if let Some((element, _to_finger)) =
+                                    self.gui.closest_element(location)
+                                {
+                                    match element.id {
+                                        ElementId::Movement => FingerAction::PlayerMovement,
+                                    }
+                                } else {
+                                    FingerAction::ShortWorldTab
+                                };
+
                                 self.fingers.push(Finger {
                                     id,
-                                    previous_position: location,
+                                    normalized_previous_position: location,
                                     total_distance: 0.0,
                                     start: Timer::now(),
-                                    long_tapped: false,
+                                    action,
                                 });
                             }
                             TouchPhase::Moved => {
                                 let position =
                                     self.fingers.iter().position(|f| f.id == id).unwrap();
-                                let first = !self.fingers[0..position]
-                                    .iter()
-                                    .any(|it| it.total_distance >= cutoff);
                                 let finger = self.fingers.get_mut(position).unwrap();
 
-                                let old = mem::replace(&mut finger.previous_position, location);
+                                let old = mem::replace(
+                                    &mut finger.normalized_previous_position,
+                                    location,
+                                );
                                 let dx = location.x - old.x;
                                 let dy = location.y - old.y;
                                 finger.total_distance += (dx * dx + dy * dy).sqrt();
 
-                                if finger.total_distance >= cutoff && first {
-                                    let speed = self.delta_time * 0.1;
+                                if finger.total_distance >= Finger::CUTOFF
+                                    && finger.action == FingerAction::ShortWorldTab
+                                {
+                                    finger.action = FingerAction::CameraMovement;
+                                }
+
+                                if finger.action == FingerAction::CameraMovement {
+                                    let speed = self.delta_time * 60.0;
                                     self.camera.turn_right(-dx as f32 * speed);
-                                    self.camera.turn_up(dy as f32 * speed);
+                                    self.camera.turn_up(-dy as f32 * speed);
                                 }
                             }
                             TouchPhase::Ended | TouchPhase::Cancelled => {
@@ -822,7 +850,8 @@ impl RendererState {
                                     self.controller.exploding = None;
                                 }
 
-                                if finger.total_distance < cutoff {
+                                if finger.action == FingerAction::ShortWorldTab {
+                                    // TODO what if this is a long press?
                                     let elapsed = finger.start.elapsed();
                                     if elapsed < Finger::LONG_TAP {
                                         self.send_player_command(worker, 1, Some(location));
@@ -892,12 +921,7 @@ impl RendererState {
         }
     }
 
-    fn send_player_command(
-        &self,
-        worker: &impl Worker,
-        diameter: i32,
-        location: Option<PhysicalPosition<f64>>,
-    ) {
+    fn send_player_command(&self, worker: &impl Worker, diameter: i32, location: Option<DVec2>) {
         let (camera_position, camera_direction) = location
             .map(|it| self.screen_to_world(it))
             .unwrap_or_else(|| {
@@ -991,27 +1015,13 @@ impl RendererState {
         assert_eq!(remaining.len(), 1);
     }
 
-    fn screen_to_world(&self, finger: PhysicalPosition<f64>) -> (Vec3, Vec3) {
+    fn screen_to_world(&self, finger: DVec2) -> (Vec3, Vec3) {
         let camera = &self.camera;
-        // TODO inner or outer size? How to compute the center?
-        let size = self.window.inner_size();
 
         let inverse = self.camera.projection_view_matrix().inverse();
 
-        let px = finger.x / size.width as f64 * 2.0 - 1.0;
-        let py = 1.0 - (finger.y / size.height as f64 * 2.0);
-
-        debug_assert!(px.abs() <= 1.1);
-        debug_assert!(py.abs() <= 1.1);
-
-        log::info!("Screen coodinates: {px} {py}");
-        log::info!("Camera position: {:?}", camera.position);
-
-        let world_position = inverse.project_point3(Vec3::new(px as f32, py as f32, 0.0));
-        // let world_position = inverse * Vec4::new(px as f32, py as f32, 1.0, 1.0);
-        // let world_position = Vec3::new(world_position.x, world_position.y, world_position.z);
-
-        log::info!("unprojected: {world_position:?}");
+        let world_position =
+            inverse.project_point3(Vec3::new(finger.x as f32, finger.y as f32, 0.0));
 
         // from eye to near clipping plane
         let direction = world_position - camera.position;

@@ -1,6 +1,6 @@
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
-use glam::{Mat4, Vec2, Vec3};
+use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 
 #[derive(Debug)]
 pub struct Camera {
@@ -96,5 +96,17 @@ impl Camera {
         let height = (self.fov_y_radians / 2.0).tan() * distance;
         let width = self.aspect_ratio * height;
         Vec2::new(width, height)
+    }
+
+    pub fn rotate_movement(&self, movement: Vec2) -> Vec3 {
+        // 0 angle looks to +X
+        // non-flying version: Quat::from_rotation_y(self.ccw_y_rot_radians)
+        Quat::from_euler(
+            EulerRot::XYZ,
+            0.0,
+            self.ccw_y_rot_radians,
+            self.up_down_radians,
+        )
+        .mul_vec3(Vec3::new(movement.y, 0.0, movement.x))
     }
 }
