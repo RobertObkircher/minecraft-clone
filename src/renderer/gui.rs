@@ -9,10 +9,7 @@ pub struct Gui {
 }
 
 pub enum Id {
-    Forward,
-    Left,
-    Backward,
-    Right,
+    Movement,
 }
 
 pub struct UiElement {
@@ -28,32 +25,13 @@ impl Gui {
         let half_size = camera.half_size_at_distance(distance);
 
         dbg!(half_size);
-        let size = 0.3 * half_size.min_element();
-        let gap = 1.1;
+        let size = 0.5 * half_size.min_element();
 
-        let center = Vec2::new(-half_size.x + 2.0 * size * gap, -half_size.y + size);
+        let center = Vec2::new(-half_size.x + size, -half_size.y + size);
 
-        let forward = UiElement {
-            id: Id::Forward,
-            center: center + Vec2::Y * size * gap,
-            size,
-            block: Block::Dirt,
-        };
-        let left = UiElement {
-            id: Id::Left,
-            center: center - Vec2::X * size * gap,
-            size,
-            block: Block::Dirt,
-        };
-        let backward = UiElement {
-            id: Id::Backward,
+        let movement = UiElement {
+            id: Id::Movement,
             center,
-            size,
-            block: Block::Dirt,
-        };
-        let right = UiElement {
-            id: Id::Right,
-            center: center + Vec2::X * size * gap,
             size,
             block: Block::Dirt,
         };
@@ -61,7 +39,7 @@ impl Gui {
         Self {
             distance,
             half_size,
-            elements: vec![forward, left, backward, right],
+            elements: vec![movement],
         }
     }
 }
