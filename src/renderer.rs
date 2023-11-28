@@ -6,7 +6,7 @@ use std::mem::size_of;
 use std::time::Duration;
 
 use bytemuck::{Pod, Zeroable};
-use glam::{IVec3, Mat4, Vec3};
+use glam::{IVec3, Vec3};
 use log::info;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::{
@@ -48,18 +48,6 @@ pub mod mesh;
 #[cfg(feature = "reload")]
 mod reload;
 mod texture;
-
-const Z_NEAR: f32 = 0.1f32;
-
-fn generate_matrix(aspect_ratio: f32, camera: &Camera) -> Mat4 {
-    let fov_y_radians = PI / 4.0;
-    let projection = Mat4::perspective_rh(fov_y_radians, aspect_ratio, Z_NEAR, 1000.0);
-
-    let vs = camera.computed_vectors();
-    let view = Mat4::look_to_rh(camera.position, vs.direction, vs.up);
-
-    projection * view
-}
 
 const DEPTH_TEXTURE_FORMAT: TextureFormat = TextureFormat::Depth32Float;
 
@@ -276,16 +264,15 @@ impl RendererState {
             push_constant_ranges: &[],
         });
 
-        let mut camera = Camera::new(Vec3::new(6.0, 6.0, 6.0));
+        let mut camera = Camera::new(Vec3::new(6.0, 6.0, 6.0), Camera::DEFAULT_FOV_Y);
+        camera.set_aspect_ratio(config.width, config.height);
         camera.turn_right(-TAU / 3.0);
         camera.turn_up(-PI / 2.0 / 3.0);
 
         let projection_view_matrix_uniform_buffer =
             device.create_buffer_init(&BufferInitDescriptor {
                 label: Some("Uniform Buffer"),
-                contents: bytemuck::cast_slice(
-                    generate_matrix(config.width as f32 / config.height as f32, &camera).as_ref(),
-                ),
+                contents: bytemuck::cast_slice(camera.projection_view_matrix().as_ref()),
                 usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             });
         let player_chunk = ChunkPosition::from_chunk_index(IVec3::ZERO);
@@ -388,6 +375,9 @@ impl RendererState {
                     WindowEvent::Resized(new_size) => {
                         self.config.width = new_size.width.max(MIN_SURFACE_SIZE);
                         self.config.height = new_size.height.max(MIN_SURFACE_SIZE);
+                        self.camera
+                            .set_aspect_ratio(self.config.width, self.config.height);
+
                         self.surface.configure(&self.device, &self.config);
                         self.depth = create_depth_texture(&self.device, &self.config);
 
@@ -554,14 +544,10 @@ impl RendererState {
                             );
                         }
                         // must happen after the player chunk uniform update to avoid one invalid frame
-                        let projection_view_matrix = generate_matrix(
-                            self.config.width as f32 / self.config.height as f32,
-                            &self.camera,
-                        );
                         self.queue.write_buffer(
                             &self.projection_view_matrix_uniform_buffer,
                             0,
-                            &bytemuck::cast_slice(projection_view_matrix.as_ref()),
+                            &bytemuck::cast_slice(self.camera.projection_view_matrix().as_ref()),
                         );
 
                         {
@@ -897,12 +883,11 @@ impl RendererState {
     }
 
     fn screen_to_world(&self, finger: PhysicalPosition<f64>) -> (Vec3, Vec3) {
-        let aspect_ratio = self.config.width as f32 / self.config.height as f32;
         let camera = &self.camera;
         // TODO inner or outer size? How to compute the center?
         let size = self.window.inner_size();
 
-        let inverse = generate_matrix(aspect_ratio, camera).inverse();
+        let inverse = self.camera.projection_view_matrix().inverse();
 
         let px = finger.x / size.width as f64 * 2.0 - 1.0;
         let py = 1.0 - (finger.y / size.height as f64 * 2.0);
@@ -923,7 +908,7 @@ impl RendererState {
         let direction = world_position - camera.position;
 
         // in the center of the screen they should be equal, on the edges the new vector is longer
-        debug_assert!(direction.length() >= Z_NEAR);
+        debug_assert!(direction.length() >= Camera::Z_NEAR);
 
         (world_position, direction.normalize())
     }

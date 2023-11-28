@@ -1,10 +1,12 @@
-use std::f32::consts::{FRAC_PI_2, TAU};
+use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 
 #[derive(Debug)]
 pub struct Camera {
     pub position: Vec3,
+    fov_y_radians: f32,
+    aspect_ratio: f32,
     /// counterclockwise rotation around the y (up) axis
     /// range [0..TAU)
     ccw_y_rot_radians: f32,
@@ -21,14 +23,23 @@ pub struct ComputedVectors {
 
 impl Camera {
     pub const MAX_UP_DOWN: f32 = FRAC_PI_2 - 0.0001;
+    pub const DEFAULT_FOV_Y: f32 = FRAC_PI_4;
+    pub const Z_NEAR: f32 = 0.1f32;
 
-    pub fn new(position: Vec3) -> Self {
+    pub fn new(position: Vec3, fov_y_radians: f32) -> Self {
         Self {
             position,
+            fov_y_radians,
+            aspect_ratio: 1.0,
             ccw_y_rot_radians: 0.0,
             up_down_radians: 0.0,
         }
     }
+
+    pub fn set_aspect_ratio(&mut self, width: u32, height: u32) {
+        self.aspect_ratio = width as f32 / height as f32;
+    }
+
     pub fn computed_vectors(&self) -> ComputedVectors {
         let direction = Vec3 {
             x: self.ccw_y_rot_radians.cos() * self.up_down_radians.cos(),
@@ -60,5 +71,19 @@ impl Camera {
         self.up_down_radians = (self.up_down_radians + radians)
             .max(-Self::MAX_UP_DOWN)
             .min(Self::MAX_UP_DOWN)
+    }
+
+    pub fn projection_view_matrix(&self) -> Mat4 {
+        let projection = Mat4::perspective_rh(
+            self.fov_y_radians,
+            self.aspect_ratio,
+            Camera::Z_NEAR,
+            1000.0,
+        );
+
+        let vs = self.computed_vectors();
+        let view = Mat4::look_to_rh(self.position, vs.direction, vs.up);
+
+        projection * view
     }
 }
