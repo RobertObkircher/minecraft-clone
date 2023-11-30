@@ -322,7 +322,7 @@ impl GuiMesh {
             }));
         };
 
-        for e in gui.elements.iter() {
+        for e in gui.elements.iter().filter(|e| e.visible) {
             let camera_distance = -gui.distance;
             let xyz = Vec3::new(e.center.x - e.size * 0.5, e.center.y - e.size * 0.5, camera_distance);
             for face in 0..6 {

@@ -16,6 +16,7 @@ use winit::window::Window;
 pub struct Input {
     controller: PlayerController,
     fingers: Vec<Finger>,
+    seconds_without_touch: f32,
 }
 
 #[derive(Default)]
@@ -59,6 +60,8 @@ impl Input {
         gui: &Gui,
         delta_time: f32,
     ) {
+        self.seconds_without_touch += delta_time;
+
         let mut movement = Vec3::ZERO;
 
         {
@@ -229,6 +232,8 @@ impl Input {
         gui: &Gui,
         delta_time: f32,
     ) {
+        self.seconds_without_touch = 0.0;
+
         let id = (device_id, id);
 
         let size = window.inner_size();
@@ -312,6 +317,10 @@ impl Input {
                 }
             }
         }
+    }
+
+    pub fn seconds_without_touch(&self) -> f32 {
+        self.seconds_without_touch
     }
 }
 

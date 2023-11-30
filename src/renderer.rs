@@ -423,6 +423,9 @@ impl RendererState {
                             self.delta_time,
                         );
 
+                        self.gui
+                            .update_touch_element_visibility(self.input.seconds_without_touch());
+
                         #[cfg(target_arch = "wasm32")]
                         if self.is_locked
                             && web_sys::window()

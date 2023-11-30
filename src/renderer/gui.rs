@@ -1,11 +1,13 @@
 use crate::renderer::camera::Camera;
 use crate::simulation::chunk::Block;
 use glam::{DVec2, Vec2};
+use std::time::Duration;
 
 pub struct Gui {
     pub half_size: Vec2,
     pub distance: f32,
     pub elements: Vec<UiElement>,
+    pub show_touch_ui: bool,
 }
 
 #[derive(Eq, PartialEq)]
@@ -19,6 +21,7 @@ pub struct UiElement {
     pub center: Vec2,
     pub size: f32,
     pub block: Block,
+    pub visible: bool,
 }
 
 impl Gui {
@@ -36,6 +39,7 @@ impl Gui {
             center,
             size,
             block: Block::Button,
+            visible: true,
         };
 
         let mut elements = vec![movement];
@@ -47,12 +51,14 @@ impl Gui {
                 center: Vec2::X * 2.0 * size * i as f32,
                 size,
                 block: Block::Button,
+                visible: true,
             });
             elements.push(UiElement {
                 id: ElementId::Center,
                 center: Vec2::Y * 2.0 * size * i as f32,
                 size,
                 block: Block::Button,
+                visible: true,
             });
         }
 
@@ -60,9 +66,11 @@ impl Gui {
             distance,
             half_size,
             elements,
+            show_touch_ui: true,
         }
     }
 
+    /// This does **not** filter out hidden touch elements at the moment!
     pub fn closest_element(&self, finger: DVec2) -> Option<(&UiElement, Vec2)> {
         let mut distance = f32::INFINITY;
         let mut to_finger = Vec2::ZERO;
@@ -94,5 +102,22 @@ impl Gui {
 
         let to_finger = finger.as_vec2() - element.center / self.half_size;
         to_finger / size
+    }
+
+    const HIDE_TOUCH_UI_AFTER_SECONDS: f32 = 5.0;
+    pub fn update_touch_element_visibility(&mut self, seconds_without_touch: f32) {
+        let show = seconds_without_touch < Gui::HIDE_TOUCH_UI_AFTER_SECONDS;
+
+        if show != self.show_touch_ui {
+            self.show_touch_ui = show;
+            for e in self.elements.iter_mut() {
+                match e.id {
+                    ElementId::Movement => {
+                        e.visible = show;
+                    }
+                    ElementId::Center => {}
+                }
+            }
+        }
     }
 }
