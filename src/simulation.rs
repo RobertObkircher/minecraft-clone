@@ -11,7 +11,6 @@ use world::World;
 
 use crate::generator::terrain::WorldSeed;
 use crate::generator::ChunkColumnElement;
-use crate::simulation::position::BlockPosition;
 use crate::worker::{MessageTag, Worker, WorkerId, WorkerMessage};
 
 pub mod chunk;
@@ -89,7 +88,7 @@ impl SimulationState {
         (state, None)
     }
 
-    fn send_commands_to_workers(&mut self, worker: &mut impl Worker) {
+    fn send_commands_to_workers(&mut self, worker: &impl Worker) {
         while let Some((x, z)) = self.world.next_column_to_generate() {
             let mut message = [0u8; 9];
             message[0..4].copy_from_slice(&x.to_ne_bytes());
@@ -234,9 +233,15 @@ impl SimulationState {
                     *message_bytes.last_mut().unwrap() = MessageTag::MovementCommandReply as u8;
                     Box::<[u8]>::from(message_bytes)
                 });
+
+                return Some(Duration::ZERO);
             }
-            _ => unreachable!("Unknown message"),
+            Some(t) => unreachable!("Unknown message {t:?}"),
+            None => {}
         }
+
+        self.world.generate_around(self.player_chunk);
+        self.send_commands_to_workers(worker);
 
         let meshes = self.world.get_updated_meshes();
         if meshes.len() > 0 {

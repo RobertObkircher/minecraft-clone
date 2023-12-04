@@ -19,6 +19,8 @@ pub struct World {
     generation_queue: VecDeque<(i32, i32, i32)>,
     mesh_queue: VecDeque<ChunkPosition>,
     //simulation_regions: Vec<SimulationRegion>,
+    min: (i32, i32),
+    max: (i32, i32),
 }
 
 impl World {
@@ -51,6 +53,8 @@ impl World {
             position_has_mesh: HashSet::default(),
             generation_queue: VecDeque::from(generation_queue),
             mesh_queue: VecDeque::new(),
+            min: (-v, -v),
+            max: (v, v),
         }
     }
 
@@ -278,6 +282,39 @@ impl World {
             !block.transparent()
         } else {
             true
+        }
+    }
+
+    pub fn generate_around(&mut self, chunk: ChunkPosition) {
+        let v = self.view_distance as i32;
+
+        while chunk.index().x - v <= self.min.0 {
+            self.min.0 -= 1;
+            for z in self.min.1..=self.max.1 {
+                self.generation_queue
+                    .push_back((self.min.0, self.highest_generated_chunk, z));
+            }
+        }
+        while chunk.index().x + v >= self.max.0 {
+            self.max.0 += 1;
+            for z in self.min.1..=self.max.1 {
+                self.generation_queue
+                    .push_back((self.max.0, self.highest_generated_chunk, z));
+            }
+        }
+        while chunk.index().z - v <= self.min.1 {
+            self.min.1 -= 1;
+            for x in self.min.0..=self.max.0 {
+                self.generation_queue
+                    .push_back((x, self.highest_generated_chunk, self.min.1));
+            }
+        }
+        while chunk.index().z + v >= self.max.1 {
+            self.max.1 += 1;
+            for x in self.min.0..=self.max.0 {
+                self.generation_queue
+                    .push_back((x, self.highest_generated_chunk, self.max.1));
+            }
         }
     }
 }
