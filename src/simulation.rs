@@ -1,3 +1,4 @@
+use std::mem;
 use std::mem::size_of_val;
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ use world::World;
 
 use crate::generator::terrain::WorldSeed;
 use crate::generator::ChunkColumnElement;
+use crate::simulation::position::BlockPosition;
 use crate::worker::{MessageTag, Worker, WorkerId, WorkerMessage};
 
 pub mod chunk;
@@ -22,6 +24,8 @@ pub struct SimulationState {
     workers: Vec<WorkerId>,
     worker_task_count: usize,
     next_worker_index: usize,
+    player_chunk: ChunkPosition,
+    player_position: Vec3,
 }
 
 #[repr(C)]
@@ -31,6 +35,19 @@ pub struct PlayerCommand {
     pub position: [f32; 3],
     pub direction: [f32; 3],
     pub diameter: i32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Zeroable, Pod)]
+pub struct MovementCommand {
+    pub direction: [f32; 3],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Zeroable, Pod)]
+pub struct MovementCommandReply {
+    pub player_chunk: [i32; 3],
+    pub position: [f32; 3],
 }
 
 impl SimulationState {
@@ -63,6 +80,8 @@ impl SimulationState {
             workers,
             worker_task_count: 0,
             next_worker_index: 0,
+            player_chunk: ChunkPosition::from_chunk_index(IVec3::ZERO),
+            player_position: Vec3::new(6.0, 6.0, 6.0),
         };
 
         state.send_commands_to_workers(worker);
@@ -162,6 +181,35 @@ impl SimulationState {
                         }
                     }
                 }
+            }
+            Some(MessageTag::MovementCommand) => {
+                let message = message.unwrap();
+                let mut remainder = &message.bytes[..];
+                let c = WorkerMessage::take::<MovementCommand>(&mut remainder).unwrap();
+                assert_eq!(remainder.len(), 1);
+
+                self.player_position += Vec3::from_array(c.direction);
+
+                let chunk_offset = BlockPosition::new(self.player_position.floor().as_ivec3())
+                    .chunk()
+                    .index();
+                if chunk_offset != IVec3::ZERO {
+                    self.player_chunk = self.player_chunk.plus(chunk_offset);
+                    self.player_position -= (chunk_offset * Chunk::SIZE as i32).as_vec3();
+                }
+
+                let reply = MovementCommandReply {
+                    player_chunk: self.player_chunk.index().to_array(),
+                    position: self.player_position.to_array(),
+                };
+                worker.send_message(WorkerId::Parent, {
+                    let command_bytes = bytemuck::bytes_of(&reply);
+                    let mut message_bytes = [0u8; mem::size_of::<MovementCommandReply>() + 1];
+                    message_bytes[0..mem::size_of::<MovementCommandReply>()]
+                        .copy_from_slice(command_bytes);
+                    *message_bytes.last_mut().unwrap() = MessageTag::MovementCommandReply as u8;
+                    Box::<[u8]>::from(message_bytes)
+                });
             }
             _ => unreachable!("Unknown message"),
         }

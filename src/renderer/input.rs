@@ -1,7 +1,7 @@
 use crate::renderer::camera::Camera;
 use crate::renderer::gui::{ElementId, Gui};
 use crate::simulation::position::ChunkPosition;
-use crate::simulation::PlayerCommand;
+use crate::simulation::{MovementCommand, PlayerCommand};
 use crate::timer::Timer;
 use crate::worker::{MessageTag, Worker, WorkerId};
 use glam::{DVec2, Vec3};
@@ -117,7 +117,16 @@ impl Input {
             movement += delta;
 
             let movement_speed = delta_time * 100.0;
-            camera.position += movement * movement_speed;
+            let movement_command = MovementCommand {
+                direction: (movement * movement_speed).to_array(),
+            };
+            worker.send_message(simulation, {
+                let command_bytes = bytemuck::bytes_of(&movement_command);
+                let mut message_bytes = [0u8; mem::size_of::<MovementCommand>() + 1];
+                message_bytes[0..mem::size_of::<MovementCommand>()].copy_from_slice(command_bytes);
+                *message_bytes.last_mut().unwrap() = MessageTag::MovementCommand as u8;
+                Box::<[u8]>::from(message_bytes)
+            });
 
             if let Some((accumulator, finger)) = &mut self.controller.exploding {
                 *accumulator += delta_time;

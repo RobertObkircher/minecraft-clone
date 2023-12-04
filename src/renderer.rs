@@ -34,8 +34,8 @@ use crate::generator::ChunkInfoBytes;
 use crate::renderer::gui::Gui;
 use crate::renderer::input::Input;
 use crate::renderer::mesh::GuiMesh;
-use crate::simulation::chunk::Chunk;
-use crate::simulation::position::{BlockPosition, ChunkPosition};
+use crate::simulation::position::ChunkPosition;
+use crate::simulation::MovementCommandReply;
 use crate::statistics::{ChunkInfo, FrameInfo, Statistics};
 use crate::timer::Timer;
 use crate::worker::{MessageTag, Worker, WorkerId, WorkerMessage};
@@ -240,7 +240,7 @@ impl RendererState {
             push_constant_ranges: &[],
         });
 
-        let mut camera = Camera::new(Vec3::new(6.0, 6.0, 6.0), Camera::DEFAULT_FOV_Y);
+        let mut camera = Camera::new(Vec3::new(0.0, 0.0, 0.0), Camera::DEFAULT_FOV_Y);
         camera.set_aspect_ratio(config.width, config.height);
         camera.turn_right(-TAU / 3.0);
         camera.turn_up(-PI / 2.0 / 3.0);
@@ -480,21 +480,6 @@ impl RendererState {
                             .device
                             .create_command_encoder(&CommandEncoderDescriptor { label: None });
 
-                        let chunk_offset =
-                            BlockPosition::new(self.camera.position.floor().as_ivec3())
-                                .chunk()
-                                .index();
-                        if chunk_offset != IVec3::ZERO {
-                            self.player_chunk = self.player_chunk.plus(chunk_offset);
-                            self.camera.position -= (chunk_offset * Chunk::SIZE as i32).as_vec3();
-                            self.queue.write_buffer(
-                                &self.player_chunk_uniform_buffer,
-                                0,
-                                &bytemuck::cast_slice(
-                                    self.player_chunk.block().index().extend(0).as_ref(),
-                                ),
-                            );
-                        }
                         // must happen after the player chunk uniform update to avoid one invalid frame
                         self.queue.write_buffer(
                             &self.chunk_projection_view_matrix_uniform_buffer,
@@ -707,11 +692,33 @@ impl RendererState {
     pub fn update(&mut self, _worker: &impl Worker, message: Option<WorkerMessage>) {
         let tag = message.as_ref().map(|it| it.tag());
 
-        if tag == Some(MessageTag::MeshData) {
-            self.update_mesh_data(message.unwrap());
-        } else if tag == Some(MessageTag::ChunkInfo) {
-            // TODO implement a shortcut in worker.js to avoid coping it in and out of wasm memory?
-            self.update_chunk_info_statistics(message.unwrap());
+        match tag {
+            Some(MessageTag::MeshData) => {
+                self.update_mesh_data(message.unwrap());
+            }
+            Some(MessageTag::ChunkInfo) => {
+                // TODO implement a shortcut in worker.js to avoid coping it in and out of wasm memory?
+                self.update_chunk_info_statistics(message.unwrap());
+            }
+            Some(MessageTag::MovementCommandReply) => {
+                let message = message.unwrap();
+                let mut remainder = &message.bytes[..];
+                let c = WorkerMessage::take::<MovementCommandReply>(&mut remainder).unwrap();
+                assert_eq!(remainder.len(), 1);
+
+                self.camera.position = Vec3::from(c.position);
+
+                let chunk = ChunkPosition::from_chunk_index(IVec3::from(c.player_chunk));
+                if self.player_chunk != chunk {
+                    self.player_chunk = chunk;
+                    self.queue.write_buffer(
+                        &self.player_chunk_uniform_buffer,
+                        0,
+                        &bytemuck::cast_slice(self.player_chunk.block().index().extend(0).as_ref()),
+                    );
+                }
+            }
+            _ => unreachable!(),
         }
     }
 

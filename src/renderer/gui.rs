@@ -1,7 +1,6 @@
 use crate::renderer::camera::Camera;
 use crate::simulation::chunk::Block;
 use glam::{DVec2, Vec2};
-use std::time::Duration;
 
 pub struct Gui {
     pub half_size: Vec2,

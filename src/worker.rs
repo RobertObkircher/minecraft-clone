@@ -73,6 +73,8 @@ pub enum MessageTag {
     MeshData,
     ChunkInfo,
     PlayerCommand,
+    MovementCommand,
+    MovementCommandReply,
 }
 
 pub fn update(
