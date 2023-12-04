@@ -188,14 +188,38 @@ impl SimulationState {
                 let c = WorkerMessage::take::<MovementCommand>(&mut remainder).unwrap();
                 assert_eq!(remainder.len(), 1);
 
-                self.player_position += Vec3::from_array(c.direction);
+                let mut final_movement = Vec3::from(c.direction);
+                for _ in 0..10 {
+                    let (new_chunk, new_position) = self
+                        .player_chunk
+                        .normalize(self.player_position + final_movement);
 
-                let chunk_offset = BlockPosition::new(self.player_position.floor().as_ivec3())
-                    .chunk()
-                    .index();
-                if chunk_offset != IVec3::ZERO {
-                    self.player_chunk = self.player_chunk.plus(chunk_offset);
-                    self.player_position -= (chunk_offset * Chunk::SIZE as i32).as_vec3();
+                    if self.world.collide(new_chunk, new_position) {
+                        break;
+                    }
+                    let mut adjust = None;
+                    for dx in (-1..=1).step_by(2) {
+                        for dy in (-2..=2).step_by(4) {
+                            for dz in (-1..=1).step_by(2) {
+                                let offset = IVec3::new(dx, dy, dz).as_vec3() * 0.3;
+
+                                let (new_chunk, new_position) =
+                                    new_chunk.normalize(new_position + offset);
+
+                                if self.world.collide(new_chunk, new_position) {
+                                    let amount = -offset * 0.1;
+                                    adjust = adjust.map(|a| a + amount).or(Some(amount));
+                                }
+                            }
+                        }
+                    }
+                    if let Some(adjust) = adjust {
+                        final_movement += adjust;
+                    } else {
+                        self.player_chunk = new_chunk;
+                        self.player_position = new_position;
+                        break;
+                    }
                 }
 
                 let reply = MovementCommandReply {

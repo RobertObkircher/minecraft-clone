@@ -270,6 +270,16 @@ impl World {
             None
         }
     }
+
+    pub fn collide(&self, chunk: ChunkPosition, offset: Vec3) -> bool {
+        if let Some(chunk) = self.get_chunk(chunk) {
+            let p = offset.as_uvec3();
+            let block = chunk.blocks[p.x as usize][p.y as usize][p.z as usize];
+            !block.transparent()
+        } else {
+            true
+        }
+    }
 }
 
 pub struct ChunkNeighbours<'a> {

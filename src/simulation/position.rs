@@ -1,5 +1,5 @@
 use crate::simulation::chunk::Chunk;
-use glam::IVec3;
+use glam::{IVec3, Vec3};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
 pub struct ChunkPosition(IVec3);
@@ -21,6 +21,20 @@ impl ChunkPosition {
         self.block()
             .plus(direction.wrapping_mul(IVec3::splat(Chunk::SIZE as i32)))
             .chunk()
+    }
+
+    pub fn normalize(self, relative: Vec3) -> (ChunkPosition, Vec3) {
+        let chunk_offset = BlockPosition::new(relative.floor().as_ivec3())
+            .chunk()
+            .index();
+        if chunk_offset != IVec3::ZERO {
+            (
+                self.plus(chunk_offset),
+                relative - (chunk_offset * Chunk::SIZE as i32).as_vec3(),
+            )
+        } else {
+            (self, relative)
+        }
     }
 }
 
