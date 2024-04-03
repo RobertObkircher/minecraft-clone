@@ -25,6 +25,7 @@ pub struct SimulationState {
     next_worker_index: usize,
     player_chunk: ChunkPosition,
     player_position: Vec3,
+    last_world_cropping_player_chunk: ChunkPosition,
 }
 
 #[repr(C)]
@@ -73,14 +74,16 @@ impl SimulationState {
             })
         });
 
+        let player_chunk = ChunkPosition::from_chunk_index(IVec3::ZERO);
         let mut state = SimulationState {
             seed,
             world,
             workers,
             worker_task_count: 0,
             next_worker_index: 0,
-            player_chunk: ChunkPosition::from_chunk_index(IVec3::ZERO),
+            player_chunk,
             player_position: Vec3::new(6.0, 6.0, 6.0),
+            last_world_cropping_player_chunk: player_chunk,
         };
 
         state.send_commands_to_workers(worker);
@@ -242,6 +245,29 @@ impl SimulationState {
 
         self.world.generate_around(self.player_chunk);
         self.send_commands_to_workers(worker);
+
+        if self
+            .player_chunk
+            .index()
+            .distance_squared(self.last_world_cropping_player_chunk.index())
+            >= 4
+        {
+            self.last_world_cropping_player_chunk = self.player_chunk;
+            let deleted = self.world.crop(self.player_chunk);
+            if deleted.len() > 0 {
+                let total_size = deleted.len() * mem::size_of::<[i32; 3]>();
+
+                let mut message = Vec::with_capacity(total_size + 1);
+                for position in deleted {
+                    message.extend_from_slice(bytemuck::bytes_of(position.index().as_ref()));
+                }
+                debug_assert_eq!(message.len(), total_size);
+                message.push(MessageTag::ChunkRemoval as u8);
+
+                let message = message.into_boxed_slice();
+                worker.send_message(WorkerId::Parent, message);
+            }
+        }
 
         let meshes = self.world.get_updated_meshes();
         if meshes.len() > 0 {

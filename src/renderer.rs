@@ -696,6 +696,9 @@ impl RendererState {
             Some(MessageTag::MeshData) => {
                 self.update_mesh_data(message.unwrap());
             }
+            Some(MessageTag::ChunkRemoval) => {
+                self.update_chunk_removal(message.unwrap());
+            }
             Some(MessageTag::ChunkInfo) => {
                 // TODO implement a shortcut in worker.js to avoid coping it in and out of wasm memory?
                 self.update_chunk_info_statistics(message.unwrap());
@@ -764,6 +767,17 @@ impl RendererState {
             self.statistics.chunk_mesh_generated(info);
 
             self.meshes.insert(position, mesh);
+        }
+    }
+
+    fn update_chunk_removal(&mut self, message: WorkerMessage) {
+        let mut remaining = &message.bytes[0..];
+
+        while let Some(position) = WorkerMessage::take::<[i32; 3]>(&mut remaining) {
+            let position = ChunkPosition::from_chunk_index(IVec3::from_array(*position));
+
+            // TODO recycle mesh
+            self.meshes.remove(&position);
         }
     }
 

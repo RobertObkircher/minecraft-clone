@@ -75,6 +75,7 @@ pub enum MessageTag {
     PlayerCommand,
     MovementCommand,
     MovementCommandReply,
+    ChunkRemoval,
 }
 
 pub fn update(

@@ -18,6 +18,7 @@ pub struct World {
     position_has_mesh: HashSet<ChunkPosition>,
     generation_queue: VecDeque<(i32, i32, i32)>,
     mesh_queue: VecDeque<ChunkPosition>,
+    free_chunk_indices: Vec<ChunkIndex>,
     //simulation_regions: Vec<SimulationRegion>,
     min: (i32, i32),
     max: (i32, i32),
@@ -53,6 +54,7 @@ impl World {
             position_has_mesh: HashSet::default(),
             generation_queue: VecDeque::from(generation_queue),
             mesh_queue: VecDeque::new(),
+            free_chunk_indices: Vec::new(),
             min: (-v, -v),
             max: (v, v),
         }
@@ -65,6 +67,10 @@ impl World {
     pub fn get_updated_meshes(&mut self) -> Vec<(MeshData, Vec<Vertex>, Vec<u16>)> {
         let mut result = Vec::with_capacity(self.mesh_queue.len());
         while let Some(position) = self.mesh_queue.pop_front() {
+            if self.get_chunk(position).is_none() {
+                continue; // not loaded anymore. Should be safe to ignore
+            }
+
             self.get_chunk_mut(position, false).unwrap().in_mesh_queue = false;
 
             let chunk = self.get_chunk(position).unwrap();
@@ -126,9 +132,40 @@ impl World {
         result
     }
 
+    pub fn crop(&mut self, around: ChunkPosition) -> Vec<ChunkPosition> {
+        let v = self.view_distance as i32;
+
+        self.min.0 = self.min.0.max(around.index().x - v);
+        self.min.1 = self.min.1.max(around.index().z - v);
+
+        self.max.0 = self.max.0.min(around.index().x + v);
+        self.max.1 = self.max.1.min(around.index().z + v);
+
+        let mut removed = Vec::new();
+        self.position_to_index.retain(|p, index| {
+            let x = p.index().x >= self.min.0 && p.index().x <= self.max.0;
+            let z = p.index().z >= self.min.1 && p.index().z <= self.max.1;
+            let retain = x && z;
+            if !retain {
+                if index.0 != 0 {
+                    removed.push(*p);
+                    self.free_chunk_indices.push(*index);
+                }
+            }
+            retain
+        });
+        removed
+    }
+
     pub fn add_chunk(&mut self, position: ChunkPosition, chunk: Chunk) {
-        let index = ChunkIndex(self.chunks.len().try_into().unwrap());
-        self.chunks.push(chunk);
+        let index = if let Some(index) = self.free_chunk_indices.pop() {
+            self.chunks[index.0 as usize] = chunk;
+            index
+        } else {
+            let index = ChunkIndex(self.chunks.len().try_into().unwrap());
+            self.chunks.push(chunk);
+            index
+        };
         self.position_to_index.insert(position, index);
         self.request_mesh_update(position);
         self.request_neighbour_mesh_updates(position);
@@ -288,28 +325,28 @@ impl World {
     pub fn generate_around(&mut self, chunk: ChunkPosition) {
         let v = self.view_distance as i32;
 
-        while chunk.index().x - v <= self.min.0 {
+        while chunk.index().x - v < self.min.0 {
             self.min.0 -= 1;
             for z in self.min.1..=self.max.1 {
                 self.generation_queue
                     .push_back((self.min.0, self.highest_generated_chunk, z));
             }
         }
-        while chunk.index().x + v >= self.max.0 {
+        while chunk.index().x + v > self.max.0 {
             self.max.0 += 1;
             for z in self.min.1..=self.max.1 {
                 self.generation_queue
                     .push_back((self.max.0, self.highest_generated_chunk, z));
             }
         }
-        while chunk.index().z - v <= self.min.1 {
+        while chunk.index().z - v < self.min.1 {
             self.min.1 -= 1;
             for x in self.min.0..=self.max.0 {
                 self.generation_queue
                     .push_back((x, self.highest_generated_chunk, self.min.1));
             }
         }
-        while chunk.index().z + v >= self.max.1 {
+        while chunk.index().z + v > self.max.1 {
             self.max.1 += 1;
             for x in self.min.0..=self.max.0 {
                 self.generation_queue
