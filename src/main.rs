@@ -18,7 +18,7 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut state = pollster::block_on(RendererState::new(&window, &mut worker));
+    let mut state = pollster::block_on(RendererState::new(&window, &mut worker, false));
 
     event_loop
         .run(|event, target| {

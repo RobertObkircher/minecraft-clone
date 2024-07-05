@@ -1,4 +1,4 @@
-import init, {wasm_renderer, wasm_update, wasm_update_with_message } from "./pkg/minecraft_clone.js";
+import init, {wasm_renderer, wasm_update, wasm_update_with_message} from "./pkg/minecraft_clone.js";
 
 /** @type {Worker[]} */
 let workers = [];
@@ -53,7 +53,9 @@ self.post_message = post_message;
 initialized = init();
 if (self.document) {
     await initialized;
-    await wasm_renderer();
+    let disable_webgpu = !navigator.gpu || await navigator.gpu.requestAdapter() === null;
+    console.log("starting wasm_renderer(disable_webgpu=" + disable_webgpu + ")");
+    await wasm_renderer(disable_webgpu);
 } else {
     onmessage = ev => {
         initialized.then(() => do_update_with_message(0, ev));

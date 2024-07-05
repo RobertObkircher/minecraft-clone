@@ -12,8 +12,8 @@ use wgpu::{
     BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBindingType, BufferSize,
     BufferUsages, Color, ColorTargetState, CommandEncoderDescriptor, CompareFunction,
     DepthStencilState, Device, DeviceDescriptor, Extent3d, Face, Features, FragmentState,
-    IndexFormat, Instance, Limits, LoadOp, MultisampleState, Operations, PipelineLayout,
-    PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue,
+    IndexFormat, Instance, InstanceDescriptor, Limits, LoadOp, MultisampleState, Operations,
+    PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue,
     RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
     RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType,
     ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration,
@@ -122,7 +122,11 @@ pub struct MeshData {
 }
 
 impl<'window> RendererState<'window> {
-    pub async fn new<W: Worker>(window: &'window Window, worker: &mut W) -> RendererState<'window> {
+    pub async fn new<W: Worker>(
+        window: &'window Window,
+        worker: &mut W,
+        disable_webgpu: bool,
+    ) -> RendererState<'window> {
         let simulation = worker.spawn_child();
         let seed = WorldSeed(42);
         {
@@ -134,7 +138,17 @@ impl<'window> RendererState<'window> {
 
         let statistics = Statistics::new();
 
-        let instance = Instance::default();
+        let instance = Instance::new(InstanceDescriptor {
+            backends: if disable_webgpu {
+                // this is a workaround because chromium has navigator.gpu but requestAdapter returns null on linux
+                wgpu::Backends::all() & !wgpu::Backends::BROWSER_WEBGPU
+            } else {
+                wgpu::Backends::all()
+            },
+            flags: Default::default(),
+            dx12_shader_compiler: Default::default(),
+            gles_minor_version: Default::default(),
+        });
         let surface = instance.create_surface(window).unwrap();
 
         let adapter = instance

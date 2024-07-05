@@ -24,7 +24,7 @@ pub fn wasm_start() {
 thread_local! {static STATE: RefCell<Option<State<'static>>> = const { RefCell::new(None) } }
 
 #[wasm_bindgen]
-pub async fn wasm_renderer() {
+pub async fn wasm_renderer(disable_webgpu: bool) {
     let event_loop = EventLoop::new().unwrap();
 
     let winit_window = Window::new(&event_loop).unwrap();
@@ -40,7 +40,7 @@ pub async fn wasm_renderer() {
 
     let winit_window = Box::leak(Box::new(winit_window));
 
-    let state = RendererState::new(winit_window, &mut WebWorker).await;
+    let state = RendererState::new(winit_window, &mut WebWorker, disable_webgpu).await;
     STATE.with_borrow_mut(|s| *s = Some(State::Renderer(state)));
 
     // This only registers callbacks and returns immediately,
