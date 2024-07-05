@@ -25,8 +25,8 @@ pub trait Worker {
     fn available_parallelism() -> NonZeroUsize;
 }
 
-pub enum State {
-    Renderer(RendererState),
+pub enum State<'window> {
+    Renderer(RendererState<'window>),
     Simulation(SimulationState),
     Generator(GeneratorState),
 }

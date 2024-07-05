@@ -21,7 +21,7 @@ pub fn wasm_start() {
 }
 
 // This could also be a `static mut`
-thread_local! {static STATE: RefCell<Option<State>> = const { RefCell::new(None) } }
+thread_local! {static STATE: RefCell<Option<State<'static>>> = const { RefCell::new(None) } }
 
 #[wasm_bindgen]
 pub async fn wasm_renderer() {
@@ -37,6 +37,8 @@ pub async fn wasm_renderer() {
         let canvas = Element::from(canvas);
         body.append_child(&canvas).unwrap();
     }
+
+    let winit_window = Box::leak(Box::new(winit_window));
 
     let state = RendererState::new(winit_window, &mut WebWorker).await;
     STATE.with_borrow_mut(|s| *s = Some(State::Renderer(state)));

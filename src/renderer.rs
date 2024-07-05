@@ -76,9 +76,9 @@ pub fn create_depth_texture(
 /// wgpu wants this to be non-zero and chromium 4x4
 const MIN_SURFACE_SIZE: u32 = 4;
 
-pub struct RendererState {
+pub struct RendererState<'window> {
     config: SurfaceConfiguration,
-    surface: Surface,
+    surface: Surface<'window>,
     depth: (Texture, TextureView),
     device: Device,
     queue: Queue,
@@ -109,9 +109,7 @@ pub struct RendererState {
     simulation: WorkerId,
     gui: Gui,
     gui_mesh: Option<GuiMesh>,
-
-    /// WARNING: order matters. This must be dropped last!
-    window: Window,
+    window: &'window Window,
 }
 
 #[repr(C)]
@@ -123,8 +121,8 @@ pub struct MeshData {
     pub is_full_and_invisible: u32,
 }
 
-impl RendererState {
-    pub async fn new<W: Worker>(window: Window, worker: &mut W) -> Self {
+impl<'window> RendererState<'window> {
+    pub async fn new<W: Worker>(window: &'window Window, worker: &mut W) -> RendererState<'window> {
         let simulation = worker.spawn_child();
         let seed = WorldSeed(42);
         {
@@ -137,15 +135,7 @@ impl RendererState {
         let statistics = Statistics::new();
 
         let instance = Instance::default();
-        let surface = unsafe {
-            // SAFETY:
-            // * window is a valid object to create a surface upon.
-            // * window remains valid until after the Surface is dropped
-            //   because it is stored as the last field in RendererState,
-            //   so it is dropped last.
-            instance.create_surface(&window)
-        }
-        .unwrap();
+        let surface = instance.create_surface(window).unwrap();
 
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -160,9 +150,10 @@ impl RendererState {
             .request_device(
                 &DeviceDescriptor {
                     label: None,
-                    features: Features::empty(),
+                    required_features: Features::empty(),
                     // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                    limits: Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+                    required_limits: Limits::downlevel_webgl2_defaults()
+                        .using_resolution(adapter.limits()),
                 },
                 None,
             )
@@ -186,6 +177,7 @@ impl RendererState {
             present_mode: PresentMode::Fifo,
             alpha_mode: swapchain_capabilities.alpha_modes[0],
             view_formats: vec![],
+            desired_maximum_frame_latency: 3, // smoother but higher latency
         };
 
         surface.configure(&device, &config);
@@ -811,11 +803,13 @@ fn create_chunk_shader_and_render_pipeline(
             module: &shader,
             entry_point: "vs_main",
             buffers: &[ChunkMesh::VERTEX_BUFFER_LAYOUT],
+            compilation_options: Default::default(),
         },
         fragment: Some(FragmentState {
             module: &shader,
             entry_point: "fs_main",
             targets: &[Some(target)],
+            compilation_options: Default::default(),
         }),
         primitive: PrimitiveState {
             cull_mode: Some(Face::Back),
