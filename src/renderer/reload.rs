@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use std::str::from_utf8;
 
 use log::error;
-use wgpu::core::pipeline::{CreateShaderModuleError, ShaderError, ShaderModuleSource};
+use wgpu::core::pipeline::{CreateShaderModuleError, ShaderModuleSource};
+use wgpu::naga::error::ShaderError;
 use wgpu::Features;
 use wgpu::{naga, Limits};
 

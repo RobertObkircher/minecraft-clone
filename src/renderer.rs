@@ -168,6 +168,7 @@ impl<'window> RendererState<'window> {
                     // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
                     required_limits: Limits::downlevel_webgl2_defaults()
                         .using_resolution(adapter.limits()),
+                    memory_hints: Default::default(),
                 },
                 None,
             )
@@ -838,5 +839,6 @@ fn create_chunk_shader_and_render_pipeline(
         }),
         multisample: MultisampleState::default(),
         multiview: None,
+        cache: None,
     })
 }

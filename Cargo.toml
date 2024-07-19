@@ -7,7 +7,8 @@ edition = "2021"
 crate-type = ["cdylib", "rlib"]
 
 [features]
-reload = ["wgpu/naga"]
+#reload = ["wgpu/naga"]
+reload = []
 
 [dependencies]
 log = "0.4.22"
@@ -17,12 +18,12 @@ glam = "0.28.0"
 rand = "0.8.5"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wgpu = { version = "0.20.1" }
+wgpu = { version = "22.0.0" }
 env_logger = "0.11.3"
 pollster = "0.3.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wgpu = { version = "0.20.1", features = ["webgl", "webgpu"] }
+wgpu = { version = "22.0.0", features = ["webgl", "webgpu"] }
 wasm-bindgen = "0.2.92"
 wasm-bindgen-futures = "0.4.42"
 web-sys = { version = "0.3.69", features = ["console", "Element", "Performance"] }
