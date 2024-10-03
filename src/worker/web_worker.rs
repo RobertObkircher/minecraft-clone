@@ -4,7 +4,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 #[wasm_bindgen]
 extern "C" {
-    #[wasm_bindgen(js_namespace = ["self", "navigator"], js_name = "hardwareConcurrency")]
+    #[wasm_bindgen(thread_local, js_namespace = ["self", "navigator"], js_name = "hardwareConcurrency")]
     static HARDWARE_CONCURRENCY: u32;
     fn spawn_worker() -> u32;
     fn post_message(receiver: u32, message: Box<[u8]>);
@@ -29,6 +29,6 @@ impl Worker for WebWorker {
     }
 
     fn available_parallelism() -> NonZeroUsize {
-        NonZeroUsize::try_from(*HARDWARE_CONCURRENCY as usize).unwrap()
+        NonZeroUsize::try_from(HARDWARE_CONCURRENCY.with(|x| *x as usize)).unwrap()
     }
 }

@@ -20,7 +20,7 @@ extern "C" {
     #[wasm_bindgen (method , structural , js_class = "Performance" , js_name = now)]
     fn now(this: &Performance) -> f64;
 
-    #[wasm_bindgen(js_name = performance)]
+    #[wasm_bindgen(thread_local, js_name = performance)]
     static PERFORMANCE: Performance;
 }
 
@@ -30,7 +30,7 @@ impl Timer {
             #[cfg(not(target_arch = "wasm32"))]
             instant: Instant::now(),
             #[cfg(target_arch = "wasm32")]
-            value: PERFORMANCE.now(),
+            value: PERFORMANCE.with(|p| p.now()),
         }
     }
 

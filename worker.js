@@ -50,7 +50,7 @@ export function post_message(id, message) {
 self.spawn_worker = spawn_worker;
 self.post_message = post_message;
 
-initialized = init();
+initialized = init({});
 if (self.document) {
     await initialized;
     let disable_webgpu = !navigator.gpu || await navigator.gpu.requestAdapter() === null;

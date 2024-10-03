@@ -12,35 +12,42 @@
             padding: 1em;
             margin: 1em;
         }
+
         #statistics:empty {
             display: none;
         }
-        @media (max-width: 700px){
+
+        @media (max-width: 700px) {
             #statistics {
                 font-size: 50%;
             }
         }
+
         kbd {
             border-radius: 2px;
             padding-left: 1px;
             padding-right: 1px;
             border: 1px solid black;
         }
+
         canvas {
             margin-top: 2px;
             aspect-ratio: 16 / 9;
             width: 100%;
             max-width: 100vh;
         }
-        @media (min-width: 480px){
+
+        @media (min-width: 480px) {
             .controls {
                 display: flex;
             }
         }
-        .controls>ul {
+
+        .controls > ul {
             list-style: none;
             padding-left: 1em;
         }
+
         #fullscreen-button {
             margin: 1em;
             margin-top: 0;
@@ -63,14 +70,17 @@ The code is available on <a href="https://github.com/RobertObkircher/minecraft-c
     </ul>
     <ul>
         <li><b>Touch-Controls:</b></li>
-        <li><kbd>Swipe-World</kbd> look around </li>
+        <li><kbd>Swipe-World</kbd> look around</li>
         <li><kbd>Bottom-Left-Square</kbd> move</li>
         <li><kbd>Short-Tap</kbd> place block</li>
         <li><kbd>Long-Tap</kbd> destroy block</li>
         <li><kbd>Two-Finger-Long-Tap</kbd> explosion</li>
     </ul>
 </div>
-<button id="fullscreen-button" type="button" onclick="let c = document.getElementsByTagName('canvas')[0]; c.requestFullscreen(); c.focus();">Fullscreen</button>
+(if colors are too dark your device doesn't support srgb surfaces)<br>
+<button id="fullscreen-button" type="button"
+        onclick="let c = document.getElementsByTagName('canvas')[0]; c.requestFullscreen(); c.focus();">Fullscreen
+</button>
 <br>
 <pre id="statistics"></pre>
 <script type="module" src="worker.js"></script>

@@ -176,12 +176,13 @@ impl<'window> RendererState<'window> {
             .expect("Failed to create device");
 
         let swapchain_capabilities = surface.get_capabilities(&adapter);
+        info!("{swapchain_capabilities:?}");
         let swapchain_format = swapchain_capabilities
             .formats
             .iter()
-            .copied()
             .find(|it| it.is_srgb())
-            .expect("Expected srgb surface");
+            .copied()
+            .unwrap_or(swapchain_capabilities.formats[0]); // TODO fix colors in Chrome on Android
 
         let size = window.inner_size();
         let config = SurfaceConfiguration {
