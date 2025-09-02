@@ -203,7 +203,7 @@ impl World {
             })
     }
 
-    pub fn neighbours(&self, position: ChunkPosition) -> Option<ChunkNeighbours> {
+    pub fn neighbours(&self, position: ChunkPosition) -> Option<ChunkNeighbours<'_>> {
         Some(ChunkNeighbours {
             pos_x: self.get_chunk(position.plus(IVec3::X))?,
             neg_x: self.get_chunk(position.plus(IVec3::NEG_X))?,

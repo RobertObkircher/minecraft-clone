@@ -1,7 +1,7 @@
 use wgpu::{
-    Device, Extent3d, ImageCopyTexture, ImageDataLayout, Origin3d, Queue, Sampler,
-    SamplerDescriptor, Texture, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
-    TextureUsages, TextureView,
+    Device, Extent3d, Origin3d, Queue, Sampler, SamplerDescriptor, TexelCopyBufferLayout,
+    TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor, TextureDimension,
+    TextureFormat, TextureUsages, TextureView,
 };
 
 pub struct BlockTexture {
@@ -32,14 +32,14 @@ impl BlockTexture {
         });
 
         queue.write_texture(
-            ImageCopyTexture {
+            TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
                 origin: Origin3d::ZERO,
                 aspect: TextureAspect::All,
             },
             &decoded.rgba,
-            ImageDataLayout {
+            TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(4 * size.width),
                 rows_per_image: Some(size.height),

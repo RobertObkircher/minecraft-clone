@@ -138,7 +138,7 @@ impl<'window> RendererState<'window> {
 
         let statistics = Statistics::new();
 
-        let instance = Instance::new(InstanceDescriptor {
+        let instance = Instance::new(&InstanceDescriptor {
             backends: if disable_webgpu {
                 // this is a workaround because chromium has navigator.gpu but requestAdapter returns null on linux
                 wgpu::Backends::all() & !wgpu::Backends::BROWSER_WEBGPU
@@ -146,8 +146,8 @@ impl<'window> RendererState<'window> {
                 wgpu::Backends::all()
             },
             flags: Default::default(),
-            dx12_shader_compiler: Default::default(),
-            gles_minor_version: Default::default(),
+            memory_budget_thresholds: Default::default(),
+            backend_options: Default::default(),
         });
         let surface = instance.create_surface(window).unwrap();
 
@@ -161,17 +161,15 @@ impl<'window> RendererState<'window> {
             .expect("Failed to find an appropriate adapter");
 
         let (device, queue) = adapter
-            .request_device(
-                &DeviceDescriptor {
-                    label: None,
-                    required_features: Features::empty(),
-                    // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
-                    required_limits: Limits::downlevel_webgl2_defaults()
-                        .using_resolution(adapter.limits()),
-                    memory_hints: Default::default(),
-                },
-                None,
-            )
+            .request_device(&DeviceDescriptor {
+                label: None,
+                required_features: Features::empty(),
+                // Make sure we use the texture resolution limits from the adapter, so we can support images the size of the swapchain.
+                required_limits: Limits::downlevel_webgl2_defaults()
+                    .using_resolution(adapter.limits()),
+                memory_hints: Default::default(),
+                trace: Default::default(),
+            })
             .await
             .expect("Failed to create device");
 
@@ -500,6 +498,7 @@ impl<'window> RendererState<'window> {
                                 label: Some("render world"),
                                 color_attachments: &[Some(RenderPassColorAttachment {
                                     view: &view,
+                                    depth_slice: None,
                                     resolve_target: None,
                                     ops: Operations {
                                         load: LoadOp::Clear(Color {
@@ -553,6 +552,7 @@ impl<'window> RendererState<'window> {
                                 label: Some("render GUI"),
                                 color_attachments: &[Some(RenderPassColorAttachment {
                                     view: &view,
+                                    depth_slice: None,
                                     resolve_target: None,
                                     ops: Operations {
                                         load: LoadOp::Load,
@@ -817,13 +817,13 @@ fn create_chunk_shader_and_render_pipeline(
         layout: Some(pipeline_layout),
         vertex: VertexState {
             module: &shader,
-            entry_point: "vs_main",
+            entry_point: Some("vs_main"),
             buffers: &[ChunkMesh::VERTEX_BUFFER_LAYOUT],
             compilation_options: Default::default(),
         },
         fragment: Some(FragmentState {
             module: &shader,
-            entry_point: "fs_main",
+            entry_point: Some("fs_main"),
             targets: &[Some(target)],
             compilation_options: Default::default(),
         }),

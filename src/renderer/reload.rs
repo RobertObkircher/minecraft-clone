@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::str::from_utf8;
 
 use log::error;
-use wgpu::core::pipeline::{CreateShaderModuleError, ShaderModuleSource};
 use wgpu::naga::error::ShaderError;
+use wgpu::wgc::pipeline::{CreateShaderModuleError, ShaderModuleSource};
 use wgpu::Features;
 use wgpu::{naga, Limits};
 
@@ -140,8 +140,9 @@ fn validate_shader_module(
         Features::SAMPLED_TEXTURE_AND_STORAGE_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
     );
     feature(
-        Caps::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
-        Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
+        Caps::STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING
+            | Caps::UNIFORM_BUFFER_ARRAY_NON_UNIFORM_INDEXING,
+        Features::STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING,
     );
     feature(
         Caps::SAMPLER_NON_UNIFORM_INDEXING,

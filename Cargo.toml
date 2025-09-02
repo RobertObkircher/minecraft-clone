@@ -18,12 +18,12 @@ glam = "0.29.0"
 rand = "0.8.5"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wgpu = { version = "22.1.0" }
+wgpu = { version = "26.0.1" }
 env_logger = "0.11.5"
 pollster = "0.3.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wgpu = { version = "22.1.0", features = ["webgl", "webgpu"] }
+wgpu = { version = "26.0.1", features = ["webgl", "webgpu"] }
 wasm-bindgen = "0.2.93"
 wasm-bindgen-futures = "0.4.43"
 web-sys = { version = "0.3.70", features = ["console", "Element", "Performance"] }
