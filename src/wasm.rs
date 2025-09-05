@@ -5,7 +5,7 @@ use crate::worker::{State, WorkerId, WorkerMessage};
 use log::{Level, Log, Metadata, Record};
 use std::cell::RefCell;
 use std::num::NonZeroU32;
-use std::panic::PanicInfo;
+use std::panic::PanicHookInfo;
 use std::sync::Arc;
 use wasm_bindgen::prelude::*;
 use web_sys::Element;
@@ -157,7 +157,7 @@ pub fn hide_statistics() {
     set_statistics(None);
 }
 
-fn panic_hook(info: &PanicInfo) {
+fn panic_hook(info: &PanicHookInfo) {
     console::error_1(&info.to_string().into());
 }
 
