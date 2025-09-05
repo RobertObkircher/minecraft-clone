@@ -14,13 +14,13 @@ reload = []
 log = "0.4.22"
 winit = { version = "0.30.12" }
 bytemuck = { version = "1.18.0", features = ["derive"] }
-glam = "0.29.0"
+glam = "0.30.5"
 rand = "0.8.5"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wgpu = { version = "26.0.1" }
 env_logger = "0.11.5"
-pollster = "0.3.0"
+pollster = "0.4.0"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { version = "26.0.1", features = ["webgl", "webgpu"] }
