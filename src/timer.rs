@@ -20,7 +20,7 @@ extern "C" {
     #[wasm_bindgen (method , structural , js_class = "Performance" , js_name = now)]
     fn now(this: &Performance) -> f64;
 
-    #[wasm_bindgen(thread_local, js_name = performance)]
+    #[wasm_bindgen(thread_local_v2, js_name = performance)]
     static PERFORMANCE: Performance;
 }
 
