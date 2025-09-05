@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytemuck::{Pod, Zeroable};
@@ -20,22 +21,22 @@ use wgpu::{
     Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
     TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
-use winit::event::{DeviceEvent, ElementState, Event, MouseButton, WindowEvent};
-use winit::event_loop::EventLoopWindowTarget;
+use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
+use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::{Key, NamedKey};
-use winit::window::{CursorGrabMode, Window};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 use camera::Camera;
 use mesh::{ChunkMesh, Vertex};
 use texture::BlockTexture;
 
-use crate::generator::terrain::WorldSeed;
 use crate::generator::ChunkInfoBytes;
+use crate::generator::terrain::WorldSeed;
 use crate::renderer::gui::Gui;
 use crate::renderer::input::Input;
 use crate::renderer::mesh::GuiMesh;
-use crate::simulation::position::ChunkPosition;
 use crate::simulation::MovementCommandReply;
+use crate::simulation::position::ChunkPosition;
 use crate::statistics::{ChunkInfo, FrameInfo, Statistics};
 use crate::timer::Timer;
 use crate::worker::{MessageTag, Worker, WorkerId, WorkerMessage};
@@ -76,9 +77,9 @@ pub fn create_depth_texture(
 /// wgpu wants this to be non-zero and chromium 4x4
 const MIN_SURFACE_SIZE: u32 = 4;
 
-pub struct RendererState<'window> {
+pub struct RendererState {
     config: SurfaceConfiguration,
-    surface: Surface<'window>,
+    surface: Surface<'static>,
     depth: (Texture, TextureView),
     device: Device,
     queue: Queue,
@@ -109,7 +110,7 @@ pub struct RendererState<'window> {
     simulation: WorkerId,
     gui: Gui,
     gui_mesh: Option<GuiMesh>,
-    window: &'window Window,
+    pub window: Arc<Window>,
 }
 
 #[repr(C)]
@@ -121,12 +122,12 @@ pub struct MeshData {
     pub is_full_and_invisible: u32,
 }
 
-impl<'window> RendererState<'window> {
+impl RendererState {
     pub async fn new<W: Worker>(
-        window: &'window Window,
+        window: Arc<Window>,
         worker: &mut W,
         disable_webgpu: bool,
-    ) -> RendererState<'window> {
+    ) -> RendererState {
         let simulation = worker.spawn_child();
         let seed = WorldSeed(42);
         {
@@ -149,7 +150,7 @@ impl<'window> RendererState<'window> {
             memory_budget_thresholds: Default::default(),
             backend_options: Default::default(),
         });
-        let surface = instance.create_surface(window).unwrap();
+        let surface = instance.create_surface(window.clone()).unwrap();
 
         let adapter = instance
             .request_adapter(&RequestAdapterOptions {
@@ -381,318 +382,323 @@ impl<'window> RendererState<'window> {
         }
     }
 
-    pub fn process_event(
+    pub fn window_event(
         &mut self,
-        event: Event<()>,
-        target: &EventLoopWindowTarget<()>,
+        target: &ActiveEventLoop,
+        window_id: WindowId,
+        event: WindowEvent,
         worker: &impl Worker,
     ) {
-        let id = self.window.id();
+        if window_id != self.window.id() {
+            return;
+        }
 
         match event {
-            Event::WindowEvent { event, window_id } if window_id == id => {
-                match event {
-                    WindowEvent::Resized(new_size) => {
-                        self.config.width = new_size.width.max(MIN_SURFACE_SIZE);
-                        self.config.height = new_size.height.max(MIN_SURFACE_SIZE);
-                        self.camera
-                            .set_aspect_ratio(self.config.width, self.config.height);
-                        self.ui_camera
-                            .set_aspect_ratio(self.config.width, self.config.height);
+            WindowEvent::Resized(new_size) => {
+                self.config.width = new_size.width.max(MIN_SURFACE_SIZE);
+                self.config.height = new_size.height.max(MIN_SURFACE_SIZE);
+                self.camera
+                    .set_aspect_ratio(self.config.width, self.config.height);
+                self.ui_camera
+                    .set_aspect_ratio(self.config.width, self.config.height);
 
-                        self.surface.configure(&self.device, &self.config);
-                        self.depth = create_depth_texture(&self.device, &self.config);
+                self.surface.configure(&self.device, &self.config);
+                self.depth = create_depth_texture(&self.device, &self.config);
 
-                        self.gui = Gui::for_camera(&self.ui_camera);
+                self.gui = Gui::for_camera(&self.ui_camera);
 
-                        self.queue.write_buffer(
-                            &self.ui_projection_view_matrix_uniform_buffer,
-                            0,
-                            &bytemuck::cast_slice(self.ui_camera.projection_view_matrix().as_ref()),
-                        );
+                self.queue.write_buffer(
+                    &self.ui_projection_view_matrix_uniform_buffer,
+                    0,
+                    &bytemuck::cast_slice(self.ui_camera.projection_view_matrix().as_ref()),
+                );
 
-                        // necessary on macos, according to hello triangle example
-                        self.window.request_redraw();
-                    }
-                    WindowEvent::CloseRequested => {
-                        target.exit();
-                    }
-                    WindowEvent::RedrawRequested => {
-                        self.window.request_redraw();
+                // necessary on macos, according to hello triangle example
+                self.window.request_redraw();
+            }
+            WindowEvent::CloseRequested => {
+                target.exit();
+            }
+            WindowEvent::RedrawRequested => {
+                self.window.request_redraw();
 
-                        self.input.start_of_frame(
-                            worker,
-                            self.simulation,
-                            self.player_chunk,
-                            &mut self.camera,
-                            &self.gui,
-                            self.delta_time,
-                        );
+                self.input.start_of_frame(
+                    worker,
+                    self.simulation,
+                    self.player_chunk,
+                    &mut self.camera,
+                    &self.gui,
+                    self.delta_time,
+                );
 
-                        self.gui
-                            .update_touch_element_visibility(self.input.seconds_without_touch());
+                self.gui
+                    .update_touch_element_visibility(self.input.seconds_without_touch());
 
-                        #[cfg(target_arch = "wasm32")]
-                        if self.is_locked
-                            && web_sys::window()
-                                .unwrap()
-                                .document()
-                                .unwrap()
-                                .pointer_lock_element()
-                                .is_none()
-                        {
-                            // without this we would have to hit esc twice
-                            info!("Lost pointer grab");
-                            self.window.set_cursor_grab(CursorGrabMode::None).unwrap();
-                            self.is_locked = false;
+                #[cfg(target_arch = "wasm32")]
+                if self.is_locked
+                    && web_sys::window()
+                        .unwrap()
+                        .document()
+                        .unwrap()
+                        .pointer_lock_element()
+                        .is_none()
+                {
+                    // without this we would have to hit esc twice
+                    info!("Lost pointer grab");
+                    self.window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                    self.is_locked = false;
+                }
+
+                #[cfg(feature = "reload")]
+                if let Some(changed) = self.render_pipeline_reloader.get_changed_content() {
+                    self.render_pipeline = match reload::validate_shader(
+                        changed,
+                        &self.device.features(),
+                        &self.device.limits(),
+                        "shader.wgsl",
+                        &["vs_main", "fs_main"],
+                    ) {
+                        Ok(source) => Some(create_chunk_shader_and_render_pipeline(
+                            &self.device,
+                            &self.pipeline_layout,
+                            self.swapchain_format.into(),
+                            source,
+                        )),
+                        Err(e) => {
+                            log::error!("Error while re-loading shader: {e}");
+                            None
                         }
+                    }
+                }
+                #[cfg(feature = "reload")]
+                let render_pipeline = if let Some(pipeline) = &self.render_pipeline {
+                    pipeline
+                } else {
+                    return;
+                };
+                #[cfg(not(feature = "reload"))]
+                let render_pipeline = &self.render_pipeline;
 
-                        #[cfg(feature = "reload")]
-                        if let Some(changed) = self.render_pipeline_reloader.get_changed_content() {
-                            self.render_pipeline = match reload::validate_shader(
-                                changed,
-                                &self.device.features(),
-                                &self.device.limits(),
-                                "shader.wgsl",
-                                &["vs_main", "fs_main"],
-                            ) {
-                                Ok(source) => Some(create_chunk_shader_and_render_pipeline(
-                                    &self.device,
-                                    &self.pipeline_layout,
-                                    self.swapchain_format.into(),
-                                    source,
-                                )),
-                                Err(e) => {
-                                    log::error!("Error while re-loading shader: {e}");
-                                    None
-                                }
-                            }
-                        }
-                        #[cfg(feature = "reload")]
-                        let render_pipeline = if let Some(pipeline) = &self.render_pipeline {
-                            pipeline
-                        } else {
-                            return;
-                        };
-                        #[cfg(not(feature = "reload"))]
-                        let render_pipeline = &self.render_pipeline;
+                let frame = self
+                    .surface
+                    .get_current_texture()
+                    .expect("Failed to acquire next swap chain texture");
+                let view = frame.texture.create_view(&TextureViewDescriptor::default());
+                let mut encoder = self
+                    .device
+                    .create_command_encoder(&CommandEncoderDescriptor { label: None });
 
-                        let frame = self
-                            .surface
-                            .get_current_texture()
-                            .expect("Failed to acquire next swap chain texture");
-                        let view = frame.texture.create_view(&TextureViewDescriptor::default());
-                        let mut encoder = self
-                            .device
-                            .create_command_encoder(&CommandEncoderDescriptor { label: None });
+                // must happen after the player chunk uniform update to avoid one invalid frame
+                self.queue.write_buffer(
+                    &self.chunk_projection_view_matrix_uniform_buffer,
+                    0,
+                    &bytemuck::cast_slice(self.camera.projection_view_matrix().as_ref()),
+                );
 
-                        // must happen after the player chunk uniform update to avoid one invalid frame
-                        self.queue.write_buffer(
-                            &self.chunk_projection_view_matrix_uniform_buffer,
-                            0,
-                            &bytemuck::cast_slice(self.camera.projection_view_matrix().as_ref()),
-                        );
-
-                        {
-                            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                                label: Some("render world"),
-                                color_attachments: &[Some(RenderPassColorAttachment {
-                                    view: &view,
-                                    depth_slice: None,
-                                    resolve_target: None,
-                                    ops: Operations {
-                                        load: LoadOp::Clear(Color {
-                                            r: 238.0 / 255.0,
-                                            g: 238.0 / 255.0,
-                                            b: 238.0 / 255.0,
-                                            a: 1.0,
-                                        }),
-                                        store: StoreOp::Store,
-                                    },
-                                })],
-                                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
-                                    view: &self.depth.1,
-                                    depth_ops: Some(Operations {
-                                        load: LoadOp::Clear(1.0),
-                                        store: StoreOp::Store,
-                                    }),
-                                    stencil_ops: None,
+                {
+                    let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                        label: Some("render world"),
+                        color_attachments: &[Some(RenderPassColorAttachment {
+                            view: &view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Clear(Color {
+                                    r: 238.0 / 255.0,
+                                    g: 238.0 / 255.0,
+                                    b: 238.0 / 255.0,
+                                    a: 1.0,
                                 }),
-                                timestamp_writes: None,
-                                occlusion_query_set: None,
-                            });
+                                store: StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                            view: &self.depth.1,
+                            depth_ops: Some(Operations {
+                                load: LoadOp::Clear(1.0),
+                                store: StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
 
-                            pass.push_debug_group("chunks setup");
-                            pass.set_pipeline(render_pipeline);
-                            pass.set_bind_group(0, &self.chunk_bind_group, &[]);
-                            pass.pop_debug_group();
-                            pass.insert_debug_marker("before chunks");
+                    pass.push_debug_group("chunks setup");
+                    pass.set_pipeline(render_pipeline);
+                    pass.set_bind_group(0, &self.chunk_bind_group, &[]);
+                    pass.pop_debug_group();
+                    pass.insert_debug_marker("before chunks");
 
-                            for (position, mesh) in self.meshes.iter() {
-                                pass.push_debug_group(&format!("Blocks of chunk {position:?}"));
-                                pass.set_index_buffer(
-                                    mesh.index_buffer.slice(..),
-                                    IndexFormat::Uint16,
-                                );
-                                pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                                pass.set_bind_group(1, &mesh.bind_group, &[]);
-                                pass.pop_debug_group();
-                                pass.insert_debug_marker(&format!("Drawing chunk {position:?}"));
-                                pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                            }
-                        }
-
-                        self.queue.submit(Some(encoder.finish()));
-
-                        let mut encoder = self
-                            .device
-                            .create_command_encoder(&CommandEncoderDescriptor { label: None });
-                        {
-                            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                                label: Some("render GUI"),
-                                color_attachments: &[Some(RenderPassColorAttachment {
-                                    view: &view,
-                                    depth_slice: None,
-                                    resolve_target: None,
-                                    ops: Operations {
-                                        load: LoadOp::Load,
-                                        store: StoreOp::Store,
-                                    },
-                                })],
-                                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
-                                    view: &self.depth.1,
-                                    depth_ops: Some(Operations {
-                                        load: LoadOp::Clear(1.0),
-                                        store: StoreOp::Store,
-                                    }),
-                                    stencil_ops: None,
-                                }),
-                                timestamp_writes: None,
-                                occlusion_query_set: None,
-                            });
-
-                            pass.push_debug_group("GUI setup");
-                            pass.set_pipeline(render_pipeline);
-                            pass.set_bind_group(0, &self.ui_bind_group, &[]);
-                            pass.pop_debug_group();
-                            pass.insert_debug_marker("before GUI");
-
-                            let (vertices, indices) = GuiMesh::generate(&self.gui);
-                            let mesh = self.gui_mesh.take();
-                            self.gui_mesh = Some(GuiMesh::upload_to_gpu(
-                                &self.device,
-                                self.player_chunk,
-                                &vertices,
-                                &indices,
-                                &self.chunk_bind_group_layout,
-                                mesh.map(|it| (it, &self.queue)),
-                            ));
-                            let mesh = self.gui_mesh.as_ref().unwrap();
-
-                            pass.push_debug_group("GUI");
-                            pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint16);
-                            pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                            pass.set_bind_group(1, &mesh.bind_group, &[]);
-                            pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-                            pass.pop_debug_group();
-                        }
-                        self.queue.submit(Some(encoder.finish()));
-
-                        frame.present();
-
-                        let frame_time = self.start.elapsed();
-                        self.start += frame_time;
-
-                        self.statistics.end_frame(FrameInfo {
-                            player_position: self.player_chunk.block().index().as_vec3()
-                                + self.camera.position,
-                            player_orientation: self.camera.computed_vectors().direction,
-                            frame_time,
-                            chunk_info_count: self.statistics.chunk_infos.len(),
-                            chunk_mesh_info_count: self.statistics.chunk_mesh_infos.len(),
-                        });
-
-                        if self.print_statistics {
-                            #[cfg(target_arch = "wasm32")]
-                            crate::wasm::display_statistics(&self.statistics);
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                println!();
-                                self.statistics
-                                    .print_last_frame(&mut std::io::stdout().lock())
-                                    .unwrap();
-                            }
-                        }
+                    for (position, mesh) in self.meshes.iter() {
+                        pass.push_debug_group(&format!("Blocks of chunk {position:?}"));
+                        pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint16);
+                        pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                        pass.set_bind_group(1, &mesh.bind_group, &[]);
+                        pass.pop_debug_group();
+                        pass.insert_debug_marker(&format!("Drawing chunk {position:?}"));
+                        pass.draw_indexed(0..mesh.index_count, 0, 0..1);
                     }
-                    WindowEvent::Focused(_) => {
-                        // TODO winit bug? changing cursor grab mode here didn't work. the cursor gets stuck when reentering after alt-tab
-                    }
-                    WindowEvent::MouseInput { state, button, .. } => {
-                        if self.is_locked {
-                            self.input.mouse(
-                                worker,
-                                self.simulation,
-                                self.player_chunk,
-                                &self.camera,
-                                state,
-                                button,
-                            );
-                        }
+                }
 
-                        // TODO account for device_id
-                        if !self.is_locked
-                            && state == ElementState::Pressed
-                            && (button == MouseButton::Left || button == MouseButton::Right)
-                        {
-                            info!("Locking cursor");
-                            match self.window.set_cursor_grab(CursorGrabMode::Locked) {
-                                Ok(()) => {
-                                    self.is_locked = true;
-                                }
-                                Err(e) => todo!("Lock cursor manually with set_position for x11 and windows? {e}")
-                            }
-                        }
+                self.queue.submit(Some(encoder.finish()));
+
+                let mut encoder = self
+                    .device
+                    .create_command_encoder(&CommandEncoderDescriptor { label: None });
+                {
+                    let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                        label: Some("render GUI"),
+                        color_attachments: &[Some(RenderPassColorAttachment {
+                            view: &view,
+                            depth_slice: None,
+                            resolve_target: None,
+                            ops: Operations {
+                                load: LoadOp::Load,
+                                store: StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                            view: &self.depth.1,
+                            depth_ops: Some(Operations {
+                                load: LoadOp::Clear(1.0),
+                                store: StoreOp::Store,
+                            }),
+                            stencil_ops: None,
+                        }),
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
+
+                    pass.push_debug_group("GUI setup");
+                    pass.set_pipeline(render_pipeline);
+                    pass.set_bind_group(0, &self.ui_bind_group, &[]);
+                    pass.pop_debug_group();
+                    pass.insert_debug_marker("before GUI");
+
+                    let (vertices, indices) = GuiMesh::generate(&self.gui);
+                    let mesh = self.gui_mesh.take();
+                    self.gui_mesh = Some(GuiMesh::upload_to_gpu(
+                        &self.device,
+                        self.player_chunk,
+                        &vertices,
+                        &indices,
+                        &self.chunk_bind_group_layout,
+                        mesh.map(|it| (it, &self.queue)),
+                    ));
+                    let mesh = self.gui_mesh.as_ref().unwrap();
+
+                    pass.push_debug_group("GUI");
+                    pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint16);
+                    pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                    pass.set_bind_group(1, &mesh.bind_group, &[]);
+                    pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                    pass.pop_debug_group();
+                }
+                self.queue.submit(Some(encoder.finish()));
+
+                frame.present();
+
+                let frame_time = self.start.elapsed();
+                self.start += frame_time;
+
+                self.statistics.end_frame(FrameInfo {
+                    player_position: self.player_chunk.block().index().as_vec3()
+                        + self.camera.position,
+                    player_orientation: self.camera.computed_vectors().direction,
+                    frame_time,
+                    chunk_info_count: self.statistics.chunk_infos.len(),
+                    chunk_mesh_info_count: self.statistics.chunk_mesh_infos.len(),
+                });
+
+                if self.print_statistics {
+                    #[cfg(target_arch = "wasm32")]
+                    crate::wasm::display_statistics(&self.statistics);
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        println!();
+                        self.statistics
+                            .print_last_frame(&mut std::io::stdout().lock())
+                            .unwrap();
                     }
-                    WindowEvent::Touch(t) => {
-                        self.input.touch(
-                            &self.window,
-                            t,
-                            worker,
-                            self.simulation,
-                            self.player_chunk,
-                            &mut self.camera,
-                            &self.gui,
-                            self.delta_time,
-                        );
-                    }
-                    WindowEvent::KeyboardInput { event, .. } => {
-                        if self.is_locked && event.logical_key == Key::Named(NamedKey::Escape) {
-                            info!("Unlocking cursor");
-                            self.window.set_cursor_grab(CursorGrabMode::None).unwrap();
-                            self.is_locked = false;
-                        } else {
-                            self.input.keyboard(
-                                event,
-                                worker,
-                                self.simulation,
-                                self.player_chunk,
-                                &self.camera,
-                                &mut self.print_statistics,
-                            );
-                        }
-                    }
-                    _ => {}
                 }
             }
-            Event::DeviceEvent { event, .. } => match event {
-                DeviceEvent::MouseMotion { delta } => {
-                    if self.is_locked && self.window.has_focus() {
-                        self.input
-                            .mouse_motion(&mut self.camera, self.delta_time, delta);
+            WindowEvent::Focused(_) => {
+                // TODO winit bug? changing cursor grab mode here didn't work. the cursor gets stuck when reentering after alt-tab
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                if self.is_locked {
+                    self.input.mouse(
+                        worker,
+                        self.simulation,
+                        self.player_chunk,
+                        &self.camera,
+                        state,
+                        button,
+                    );
+                }
+
+                // TODO account for device_id
+                if !self.is_locked
+                    && state == ElementState::Pressed
+                    && (button == MouseButton::Left || button == MouseButton::Right)
+                {
+                    info!("Locking cursor");
+                    match self.window.set_cursor_grab(CursorGrabMode::Locked) {
+                        Ok(()) => {
+                            self.is_locked = true;
+                        }
+                        Err(e) => {
+                            todo!("Lock cursor manually with set_position for x11 and windows? {e}")
+                        }
                     }
                 }
-                _ => {}
-            },
+            }
+            WindowEvent::Touch(t) => {
+                self.input.touch(
+                    &self.window,
+                    t,
+                    worker,
+                    self.simulation,
+                    self.player_chunk,
+                    &mut self.camera,
+                    &self.gui,
+                    self.delta_time,
+                );
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                if self.is_locked && event.logical_key == Key::Named(NamedKey::Escape) {
+                    info!("Unlocking cursor");
+                    self.window.set_cursor_grab(CursorGrabMode::None).unwrap();
+                    self.is_locked = false;
+                } else {
+                    self.input.keyboard(
+                        event,
+                        worker,
+                        self.simulation,
+                        self.player_chunk,
+                        &self.camera,
+                        &mut self.print_statistics,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn device_event(
+        &mut self,
+        _event_loop: &ActiveEventLoop,
+        _device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        match event {
+            DeviceEvent::MouseMotion { delta } => {
+                if self.is_locked && self.window.has_focus() {
+                    self.input
+                        .mouse_motion(&mut self.camera, self.delta_time, delta);
+                }
+            }
             _ => {}
         }
     }

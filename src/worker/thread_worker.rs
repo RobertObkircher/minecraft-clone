@@ -27,7 +27,7 @@ fn run_thread(mut w: ThreadWorker) {
 }
 
 pub struct ThreadWorker {
-    for_others: Option<Sender<WorkerMessage>>,
+    for_others: Sender<WorkerMessage>,
     pub incoming: Receiver<WorkerMessage>,
     parent: Option<(NonZeroU32, Sender<WorkerMessage>)>,
     children: Vec<Sender<WorkerMessage>>,
@@ -38,31 +38,31 @@ impl ThreadWorker {
         let (my_sender, my_receiver) = mpsc::channel();
 
         Self {
-            for_others: Some(my_sender),
+            for_others: my_sender,
             incoming: my_receiver,
             parent,
             children: vec![],
         }
     }
 
-    fn spawn_child_worker<F>(&mut self, f: F)
+    fn spawn_child_worker<F>(&mut self, f: F) -> WorkerId
     where
         F: Send + 'static + FnOnce(ThreadWorker),
     {
         let id = NonZeroU32::try_from(self.children.len() as u32 + 1).unwrap();
-        let to_parent = self.for_others.as_ref().unwrap().clone();
+        let to_parent = self.for_others.clone();
         let worker = ThreadWorker::new(Some((id, to_parent)));
 
-        self.children.push(worker.for_others.clone().unwrap());
+        self.children.push(worker.for_others.clone());
 
         thread::spawn(|| f(worker));
+        WorkerId::Child(id)
     }
 }
 
 impl Worker for ThreadWorker {
     fn spawn_child(&mut self) -> WorkerId {
-        self.spawn_child_worker(run_thread);
-        WorkerId::Child(NonZeroU32::try_from(self.children.len() as u32).unwrap())
+        self.spawn_child_worker(run_thread)
     }
     fn send_message(&self, receiver: WorkerId, message: Box<[u8]>) {
         match receiver {

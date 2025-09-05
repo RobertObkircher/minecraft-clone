@@ -1,15 +1,18 @@
+use crate::RendererState;
 use crate::statistics::Statistics;
 use crate::worker::web_worker::WebWorker;
 use crate::worker::{State, WorkerId, WorkerMessage};
-use crate::RendererState;
 use log::{Level, Log, Metadata, Record};
 use std::cell::RefCell;
 use std::num::NonZeroU32;
 use std::panic::PanicInfo;
+use std::sync::Arc;
 use wasm_bindgen::prelude::*;
-use web_sys::console;
 use web_sys::Element;
-use winit::event_loop::EventLoop;
+use web_sys::console;
+use winit::application::ApplicationHandler;
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy};
 use winit::platform::web::{EventLoopExtWebSys, WindowExtWebSys};
 use winit::window::Window;
 
@@ -21,38 +24,94 @@ pub fn wasm_start() {
 }
 
 // This could also be a `static mut`
-thread_local! {static STATE: RefCell<Option<State<'static>>> = const { RefCell::new(None) } }
+thread_local! {static STATE: RefCell<Option<State>> = const { RefCell::new(None) } }
+
+fn if_renderer_state_mut(f: impl FnOnce(&mut RendererState)) {
+    STATE.with_borrow_mut(|s| match s {
+        Some(State::Renderer(s)) => f(s),
+        None => {}
+        _ => unreachable!("unexpected renderer state"),
+    })
+}
 
 #[wasm_bindgen]
-pub async fn wasm_renderer(disable_webgpu: bool) {
-    let event_loop = EventLoop::new().unwrap();
+pub fn wasm_renderer(disable_webgpu: bool) {
+    let event_loop = EventLoop::with_user_event().build().unwrap();
+    let proxy = Some(event_loop.create_proxy());
+    let app = WasmApp {
+        proxy,
+        disable_webgpu,
+    };
+    event_loop.spawn_app(app);
+}
 
-    let winit_window = Window::new(&event_loop).unwrap();
+pub struct WasmApp {
+    proxy: Option<EventLoopProxy<RendererState>>,
+    disable_webgpu: bool,
+}
 
-    {
-        let document = web_sys::window().unwrap().document().unwrap();
-        let body = document.body().unwrap();
+impl ApplicationHandler<RendererState> for WasmApp {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(proxy) = self.proxy.take() {
+            let winit_window = Arc::new(
+                event_loop
+                    .create_window(Window::default_attributes())
+                    .unwrap(),
+            );
+            {
+                let document = web_sys::window().unwrap().document().unwrap();
+                let body = document.body().unwrap();
 
-        let canvas = winit_window.canvas().unwrap();
-        let canvas = Element::from(canvas);
-        body.append_child(&canvas).unwrap();
+                let canvas = winit_window.canvas().unwrap();
+                let canvas = Element::from(canvas);
+                body.append_child(&canvas).unwrap();
+            }
+            let disable_webgpu = self.disable_webgpu;
+            wasm_bindgen_futures::spawn_local(async move {
+                assert!(
+                    proxy
+                        .send_event(
+                            RendererState::new(winit_window, &mut WebWorker, disable_webgpu).await
+                        )
+                        .is_ok()
+                )
+            });
+        }
     }
 
-    let winit_window = Box::leak(Box::new(winit_window));
+    #[allow(unused_mut)]
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, mut state: RendererState) {
+        // This is where proxy.send_event() ends up
+        state.window.request_redraw();
+        // TODO resize?
+        // state.resize(
+        //     event.window.inner_size().width,
+        //     event.window.inner_size().height,
+        // );
+        STATE.with_borrow_mut(|s| *s = Some(State::Renderer(state)));
+    }
 
-    let state = RendererState::new(winit_window, &mut WebWorker, disable_webgpu).await;
-    STATE.with_borrow_mut(|s| *s = Some(State::Renderer(state)));
+    fn window_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        window_id: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        if_renderer_state_mut(|state| {
+            state.window_event(event_loop, window_id, event, &WebWorker);
+        })
+    }
 
-    // This only registers callbacks and returns immediately,
-    // because we must not block the javascript event loop.
-    // If we called run instead then winit would force the immediate
-    // return with a javascript exception.
-    event_loop.spawn(|event, target| {
-        STATE.with_borrow_mut(|state| match state {
-            Some(State::Renderer(state)) => state.process_event(event, target, &WebWorker),
-            _ => unreachable!(),
-        });
-    });
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        device_id: DeviceId,
+        event: DeviceEvent,
+    ) {
+        if_renderer_state_mut(|state| {
+            state.device_event(event_loop, device_id, event);
+        })
+    }
 }
 
 #[wasm_bindgen]
