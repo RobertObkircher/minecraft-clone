@@ -68,10 +68,11 @@ struct DecodedImage {
 }
 
 fn decode_bitmap(raw: &[u8]) -> DecodedImage {
-    assert_eq!(&raw[0..2], "BM".as_bytes());
+    assert_eq!(&raw[0..2], b"BM");
 
     let bf_off_bits = u32::from_le_bytes(raw[10..14].try_into().unwrap());
     assert!(bf_off_bits >= 54, "must be after headers");
+    dbg!(bf_off_bits);
 
     let bi_width = i32::from_le_bytes(raw[18..22].try_into().unwrap());
     assert!(bi_width > 0);
