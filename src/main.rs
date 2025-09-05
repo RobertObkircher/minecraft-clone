@@ -64,7 +64,7 @@ impl ApplicationHandler<RendererState> for MainApp {
         state.device_event(event_loop, device_id, event);
     }
 
-    fn suspended(&mut self, event_loop: &ActiveEventLoop) {
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
         // TODO shutdown workers
         self.state = None;
     }

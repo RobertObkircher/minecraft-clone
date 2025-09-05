@@ -9,8 +9,8 @@ use chunk::{Block, Chunk};
 use position::ChunkPosition;
 use world::World;
 
-use crate::generator::terrain::WorldSeed;
 use crate::generator::ChunkColumnElement;
+use crate::generator::terrain::WorldSeed;
 use crate::worker::{MessageTag, Worker, WorkerId, WorkerMessage};
 
 pub mod chunk;
@@ -74,7 +74,7 @@ impl SimulationState {
             })
         });
 
-        let player_chunk = ChunkPosition::from_chunk_index(IVec3::ZERO);
+        let player_chunk = ChunkPosition::from_chunk_index(IVec3::new(0, 3, 0));
         let mut state = SimulationState {
             seed,
             world,

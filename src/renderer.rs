@@ -249,7 +249,6 @@ impl RendererState {
 
         let mut camera = Camera::new(Vec3::new(0.0, 0.0, 0.0), Camera::DEFAULT_FOV_Y);
         camera.set_aspect_ratio(config.width, config.height);
-        camera.turn_right(-TAU / 3.0);
         camera.turn_up(-PI / 2.0 / 3.0);
 
         let chunk_projection_view_matrix_uniform_buffer =
