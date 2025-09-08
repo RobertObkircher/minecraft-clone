@@ -373,7 +373,7 @@ impl RendererState {
             delta_time,
             input: Input::default(),
             is_locked: false,
-            print_statistics: true,
+            print_statistics: false,
             simulation,
             gui,
             gui_mesh: None,
