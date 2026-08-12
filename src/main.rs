@@ -34,6 +34,7 @@ impl ApplicationHandler<RendererState> for MainApp {
         window_attributes.inner_size = Some(LogicalSize::new(800.0, 600.0).into());
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         self.state = Some(pollster::block_on(RendererState::new(
+            event_loop.owned_display_handle(),
             window,
             &mut self.thread_worker,
             false,

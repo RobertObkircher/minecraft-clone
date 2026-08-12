@@ -12,17 +12,18 @@ use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
     BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBindingType, BufferSize,
     BufferUsages, Color, ColorTargetState, CommandEncoderDescriptor, CompareFunction,
-    DepthStencilState, Device, DeviceDescriptor, Extent3d, Face, Features, FragmentState,
-    IndexFormat, Instance, InstanceDescriptor, Limits, LoadOp, MultisampleState, Operations,
-    PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue,
-    RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
-    RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType,
-    ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration,
-    Texture, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
+    CurrentSurfaceTexture, DepthStencilState, Device, DeviceDescriptor, ExperimentalFeatures,
+    Extent3d, Face, Features, FragmentState, IndexFormat, Instance, InstanceDescriptor, Limits,
+    LoadOp, MultisampleState, Operations, PipelineLayout, PipelineLayoutDescriptor,
+    PowerPreference, PresentMode, PrimitiveState, Queue, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline,
+    RenderPipelineDescriptor, RequestAdapterOptions, SamplerBindingType, ShaderModuleDescriptor,
+    ShaderSource, ShaderStages, StoreOp, Surface, SurfaceColorSpace, SurfaceConfiguration, Texture,
+    TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType, TextureUsages,
     TextureView, TextureViewDescriptor, TextureViewDimension, VertexState,
 };
 use winit::event::{DeviceEvent, DeviceId, ElementState, MouseButton, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, OwnedDisplayHandle};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{CursorGrabMode, Window, WindowId};
 
@@ -124,6 +125,7 @@ pub struct MeshData {
 
 impl RendererState {
     pub async fn new<W: Worker>(
+        display: OwnedDisplayHandle,
         window: Arc<Window>,
         worker: &mut W,
         disable_webgpu: bool,
@@ -139,7 +141,7 @@ impl RendererState {
 
         let statistics = Statistics::new();
 
-        let instance = Instance::new(&InstanceDescriptor {
+        let instance = Instance::new(InstanceDescriptor {
             backends: if disable_webgpu {
                 // this is a workaround because chromium has navigator.gpu but requestAdapter returns null on linux
                 wgpu::Backends::all() & !wgpu::Backends::BROWSER_WEBGPU
@@ -149,6 +151,7 @@ impl RendererState {
             flags: Default::default(),
             memory_budget_thresholds: Default::default(),
             backend_options: Default::default(),
+            display: Some(Box::new(display)),
         });
         let surface = instance.create_surface(window.clone()).unwrap();
 
@@ -157,6 +160,7 @@ impl RendererState {
                 power_preference: PowerPreference::HighPerformance,
                 force_fallback_adapter: false,
                 compatible_surface: Some(&surface),
+                apply_limit_buckets: false,
             })
             .await
             .expect("Failed to find an appropriate adapter");
@@ -170,6 +174,7 @@ impl RendererState {
                     .using_resolution(adapter.limits()),
                 memory_hints: Default::default(),
                 trace: Default::default(),
+                experimental_features: ExperimentalFeatures::disabled(),
             })
             .await
             .expect("Failed to create device");
@@ -193,6 +198,7 @@ impl RendererState {
             alpha_mode: swapchain_capabilities.alpha_modes[0],
             view_formats: vec![],
             desired_maximum_frame_latency: 3, // smoother but higher latency
+            color_space: SurfaceColorSpace::Srgb,
         };
 
         surface.configure(&device, &config);
@@ -243,8 +249,8 @@ impl RendererState {
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: None,
-            bind_group_layouts: &[&bind_group_layout, &chunk_bind_group_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&bind_group_layout), Some(&chunk_bind_group_layout)],
+            immediate_size: 0,
         });
 
         let mut camera = Camera::new(Vec3::new(0.0, 0.0, 0.0), Camera::DEFAULT_FOV_Y);
@@ -478,10 +484,11 @@ impl RendererState {
                 #[cfg(not(feature = "reload"))]
                 let render_pipeline = &self.render_pipeline;
 
-                let frame = self
-                    .surface
-                    .get_current_texture()
-                    .expect("Failed to acquire next swap chain texture");
+                let frame = match self.surface.get_current_texture() {
+                    CurrentSurfaceTexture::Success(s) => s,
+                    _ => return,
+                };
+
                 let view = frame.texture.create_view(&TextureViewDescriptor::default());
                 let mut encoder = self
                     .device
@@ -521,6 +528,7 @@ impl RendererState {
                         }),
                         timestamp_writes: None,
                         occlusion_query_set: None,
+                        multiview_mask: None,
                     });
 
                     pass.push_debug_group("chunks setup");
@@ -567,6 +575,7 @@ impl RendererState {
                         }),
                         timestamp_writes: None,
                         occlusion_query_set: None,
+                        multiview_mask: None,
                     });
 
                     pass.push_debug_group("GUI setup");
@@ -595,8 +604,7 @@ impl RendererState {
                     pass.pop_debug_group();
                 }
                 self.queue.submit(Some(encoder.finish()));
-
-                frame.present();
+                self.queue.present(frame);
 
                 let frame_time = self.start.elapsed();
                 self.start += frame_time;
@@ -823,7 +831,7 @@ fn create_chunk_shader_and_render_pipeline(
         vertex: VertexState {
             module: &shader,
             entry_point: Some("vs_main"),
-            buffers: &[ChunkMesh::VERTEX_BUFFER_LAYOUT],
+            buffers: &[Some(ChunkMesh::VERTEX_BUFFER_LAYOUT)],
             compilation_options: Default::default(),
         },
         fragment: Some(FragmentState {
@@ -838,13 +846,13 @@ fn create_chunk_shader_and_render_pipeline(
         },
         depth_stencil: Some(DepthStencilState {
             format: DEPTH_TEXTURE_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: CompareFunction::Less,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(CompareFunction::Less),
             stencil: Default::default(),
             bias: Default::default(),
         }),
         multisample: MultisampleState::default(),
-        multiview: None,
+        multiview_mask: None,
         cache: None,
     })
 }

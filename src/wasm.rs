@@ -66,12 +66,19 @@ impl ApplicationHandler<RendererState> for WasmApp {
                 let canvas = Element::from(canvas);
                 body.append_child(&canvas).unwrap();
             }
+            let display = event_loop.owned_display_handle();
             let disable_webgpu = self.disable_webgpu;
             wasm_bindgen_futures::spawn_local(async move {
                 assert!(
                     proxy
                         .send_event(
-                            RendererState::new(winit_window, &mut WebWorker, disable_webgpu).await
+                            RendererState::new(
+                                display,
+                                winit_window,
+                                &mut WebWorker,
+                                disable_webgpu
+                            )
+                            .await
                         )
                         .is_ok()
                 )
