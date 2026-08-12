@@ -1,4 +1,4 @@
-use rand::{Rng, RngCore};
+use rand::{Rng, RngExt};
 use std::ops::{Index, IndexMut};
 
 const TILE_SIZE: usize = 16;

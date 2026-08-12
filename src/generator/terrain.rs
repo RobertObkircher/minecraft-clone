@@ -5,8 +5,8 @@ use crate::statistics::ChunkInfo;
 use crate::timer::Timer;
 use bytemuck::{Pod, Zeroable};
 use glam::IVec3;
-use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::rngs::StdRng;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Zeroable, Pod)]

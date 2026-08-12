@@ -3,8 +3,8 @@ use std::mem;
 
 use glam::{IVec3, Vec3};
 
-use crate::renderer::mesh::{ChunkMesh, Vertex};
 use crate::renderer::MeshData;
+use crate::renderer::mesh::{ChunkMesh, Vertex};
 use crate::simulation::chunk::{Block, Chunk, Transparency};
 use crate::simulation::position::{BlockPosition, ChunkPosition};
 

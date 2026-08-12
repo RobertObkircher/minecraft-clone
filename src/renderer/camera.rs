@@ -1,5 +1,7 @@
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4, TAU};
 
+use glam::camera::rh::proj::directx::perspective;
+use glam::camera::rh::view::look_to_mat4;
 use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 
 #[derive(Debug)]
@@ -74,7 +76,7 @@ impl Camera {
     }
 
     pub fn projection_view_matrix(&self) -> Mat4 {
-        let projection = Mat4::perspective_rh(
+        let projection = perspective(
             self.fov_y_radians,
             self.aspect_ratio,
             Camera::Z_NEAR,
@@ -82,7 +84,7 @@ impl Camera {
         );
 
         let vs = self.computed_vectors();
-        let view = Mat4::look_to_rh(self.position, vs.direction, vs.up);
+        let view = look_to_mat4(self.position, vs.direction, vs.up);
 
         projection * view
     }
